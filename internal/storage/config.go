@@ -9,6 +9,7 @@ import (
 type Config struct {
 	Theme string `json:"theme,omitempty"`
 	Model string `json:"model,omitempty"`
+	Vim   bool   `json:"vim,omitempty"`
 }
 
 func configPath() (string, error) {

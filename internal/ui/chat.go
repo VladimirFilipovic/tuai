@@ -18,6 +18,7 @@ import (
 	"github.com/vladafilipovic/claudetui/internal/claude"
 	"github.com/vladafilipovic/claudetui/internal/clipboard"
 	"github.com/vladafilipovic/claudetui/internal/storage"
+	vimpkg "github.com/vladafilipovic/claudetui/internal/vim"
 )
 
 const (
@@ -71,6 +72,11 @@ type chatModel struct {
 	// started so down-past-most-recent restores it.
 	historyIdx   int
 	historyDraft string
+
+	// vim is nil when modal editing is off. When non-nil it intercepts
+	// keypresses ahead of the textarea; the textarea still handles every
+	// key in Insert mode (vim returns "not consumed" there).
+	vim *vimpkg.Editor
 }
 
 type chunkMsg struct {
@@ -115,7 +121,7 @@ func newChatModel(sess *storage.Session, store *storage.Store, client *claude.Cl
 	sp := spinner.New(spinner.WithSpinner(spinner.Dot))
 	sp.Style = lipgloss.NewStyle().Foreground(CurrentTheme().Accent())
 
-	return chatModel{
+	m := chatModel{
 		session:    sess,
 		store:      store,
 		client:     client,
@@ -125,6 +131,12 @@ func newChatModel(sess *storage.Session, store *storage.Store, client *claude.Cl
 		atBottom:   true,
 		historyIdx: -1,
 	}
+	// Vim is opt-in; it starts in Insert mode so typing always works on the
+	// first keystroke without an extra `i`. Toggle on/off with `/vim`.
+	if cfg, err := storage.LoadConfig(); err == nil && cfg.Vim {
+		m.vim = vimpkg.New()
+	}
+	return m
 }
 
 func waitChunk(ch <-chan claude.Chunk) tea.Cmd {
@@ -194,6 +206,19 @@ func (m chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyPressMsg:
+		// Vim hook runs before the host's own key handling so motions,
+		// operators, and the i/a/o family don't fall through to the
+		// textarea. Insert mode reports "not consumed" for everything
+		// except esc, so plain typing keeps working unchanged. Normal
+		// mode reports "not consumed" only when esc is pressed with no
+		// partial command — that lets the host's esc handler (back to
+		// sessions / cancel stream) keep working.
+		if m.vim != nil {
+			if m.vim.HandleKey(&m.textarea, msg.String()) {
+				m.refreshViewport()
+				return m, nil
+			}
+		}
 		switch msg.String() {
 		case "esc":
 			if m.streaming && m.cancel != nil {
@@ -622,8 +647,26 @@ func (m *chatModel) handleSlash(input string) tea.Cmd {
 		m.refreshViewport()
 		return nil
 
+	case "/vim":
+		// Toggle modal editing. Persist the new state so it sticks across
+		// sessions; show a short notice so the user can see what changed
+		// without having to remember which way the toggle flipped.
+		cur, _ := storage.LoadConfig()
+		if m.vim == nil {
+			m.vim = vimpkg.New()
+			cur.Vim = true
+			m.notice = "vim mode on · esc → Normal, i → Insert"
+		} else {
+			m.vim = nil
+			cur.Vim = false
+			m.notice = "vim mode off"
+		}
+		_ = storage.SaveConfig(cur)
+		m.refreshViewport()
+		return nil
+
 	case "/help":
-		m.notice = "commands: /model [name] · /theme · /new · /clear · /help"
+		m.notice = "commands: /model [name] · /theme · /vim · /new · /clear · /help"
 		m.refreshViewport()
 		return nil
 
@@ -1346,8 +1389,19 @@ func (m chatModel) View() string {
 	b.WriteString(indentLines(input, "  "))
 	b.WriteString("\n")
 
-	help := s.Help.Render("enter send • alt+enter/ctrl+j newline • ctrl+v paste • ctrl+p palette • /model /theme /new /clear /help • esc back")
-	b.WriteString(lipgloss.NewStyle().MaxWidth(m.width).Render(help))
+	helpText := "enter send • alt+enter/ctrl+j newline • ctrl+v paste • ctrl+p palette • /model /theme /vim /new /clear /help • esc back"
+	if m.vim != nil {
+		// Surface the active mode prominently — without it the user has no
+		// way to tell why h/j/k/l are or aren't being typed as characters.
+		modeBadge := lipgloss.NewStyle().
+			Foreground(CurrentTheme().Accent()).
+			Bold(true).
+			Render("-- " + m.vim.Mode().String() + " --")
+		help := s.Help.Render(helpText)
+		b.WriteString(lipgloss.NewStyle().MaxWidth(m.width).Render(modeBadge + " " + help))
+	} else {
+		b.WriteString(lipgloss.NewStyle().MaxWidth(m.width).Render(s.Help.Render(helpText)))
+	}
 
 	return b.String()
 }
