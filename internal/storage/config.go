@@ -1,0 +1,52 @@
+package storage
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+)
+
+type Config struct {
+	Theme string `json:"theme,omitempty"`
+	Model string `json:"model,omitempty"`
+}
+
+func configPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(home, ".config", "claudetui")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "config.json"), nil
+}
+
+func LoadConfig() (Config, error) {
+	var cfg Config
+	p, err := configPath()
+	if err != nil {
+		return cfg, err
+	}
+	data, err := os.ReadFile(p)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return cfg, nil
+		}
+		return cfg, err
+	}
+	return cfg, json.Unmarshal(data, &cfg)
+}
+
+func SaveConfig(cfg Config) error {
+	p, err := configPath()
+	if err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(p, data, 0o644)
+}

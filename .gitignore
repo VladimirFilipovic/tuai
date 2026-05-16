@@ -1,0 +1,4 @@
+/claudetui
+*.test
+*.out
+.DS_Store
