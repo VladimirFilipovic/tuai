@@ -15,10 +15,10 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	lipgloss "charm.land/lipgloss/v2"
-	"github.com/vladafilipovic/claudetui/internal/claude"
-	"github.com/vladafilipovic/claudetui/internal/clipboard"
-	"github.com/vladafilipovic/claudetui/internal/storage"
-	vimpkg "github.com/vladafilipovic/claudetui/internal/vim"
+	"github.com/VladimirFilipovic/tuai/internal/claude"
+	"github.com/VladimirFilipovic/tuai/internal/clipboard"
+	"github.com/VladimirFilipovic/tuai/internal/storage"
+	vimpkg "github.com/VladimirFilipovic/tuai/internal/vim"
 )
 
 const (
@@ -1407,7 +1407,7 @@ func (m chatModel) View() string {
 	}
 	var b strings.Builder
 
-	chip := s.HeaderChip.Render("claudetui")
+	chip := s.HeaderChip.Render("tuai")
 	name := s.Title.Render("  " + m.session.Name)
 	modelChip := s.ModelChip.Render(prettyModelName(m.client))
 	meta := s.Subtle.Render(fmt.Sprintf(" · %d msgs", len(m.session.Messages)))

@@ -51,7 +51,7 @@ func NewStore() (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("home dir: %w", err)
 	}
-	dir := filepath.Join(home, ".config", "claudetui", "sessions")
+	dir := filepath.Join(home, ".config", "tuai", "sessions")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("mkdir: %w", err)
 	}

@@ -5,8 +5,8 @@ import (
 	"os"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/vladafilipovic/claudetui/internal/claude"
-	"github.com/vladafilipovic/claudetui/internal/ui"
+	"github.com/VladimirFilipovic/tuai/internal/claude"
+	"github.com/VladimirFilipovic/tuai/internal/ui"
 )
 
 func main() {

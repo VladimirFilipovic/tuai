@@ -13,7 +13,7 @@ func withConfigHome(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	// Some platforms read XDG_CONFIG_HOME; keep them out of the picture so
-	// the test only exercises ~/.config/claudetui under our temp HOME.
+	// the test only exercises ~/.config/tuai under our temp HOME.
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, ".config"))
 }
 

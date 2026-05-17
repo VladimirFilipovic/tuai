@@ -21,7 +21,7 @@ func configPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	dir := filepath.Join(home, ".config", "claudetui")
+	dir := filepath.Join(home, ".config", "tuai")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}

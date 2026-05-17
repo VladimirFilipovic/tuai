@@ -19,7 +19,7 @@ import (
 )
 
 // SaveImageToFile pulls a PNG image from the OS clipboard, writes it to a
-// temp file under ~/.claude/claudetui-images (created on demand), and returns
+// temp file under ~/.claude/tuai-images (created on demand), and returns
 // the absolute path. Returns an error with no side effects if the clipboard
 // does not contain an image.
 func SaveImageToFile() (string, error) {
@@ -38,7 +38,7 @@ func cacheDir() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	dir := filepath.Join(home, ".claude", "claudetui-images")
+	dir := filepath.Join(home, ".claude", "tuai-images")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}

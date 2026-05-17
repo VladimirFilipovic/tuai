@@ -6,7 +6,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/vladafilipovic/claudetui/internal/storage"
+	"github.com/VladimirFilipovic/tuai/internal/storage"
 )
 
 type sessionsModel struct {

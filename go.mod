@@ -1,4 +1,4 @@
-module github.com/vladafilipovic/claudetui
+module github.com/VladimirFilipovic/tuai
 
 go 1.25.0
 

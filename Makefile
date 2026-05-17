@@ -1,4 +1,4 @@
-BIN     := claudetui
+BIN     := tuai
 PKG     := .
 GOFLAGS := -trimpath
 LDFLAGS := -s -w
@@ -10,7 +10,7 @@ MODEL ?=
 .PHONY: help build run dev install fmt vet tidy test clean reset deps version
 
 help:
-	@echo "claudetui — TUI wrapper for Claude Code"
+	@echo "tuai — TUI wrapper for Claude Code"
 	@echo ""
 	@echo "Targets:"
 	@echo "  make run         build and run"
@@ -23,7 +23,7 @@ help:
 	@echo "  make deps        upgrade all dependencies to latest"
 	@echo "  make test        run tests"
 	@echo "  make clean       remove built binary"
-	@echo "  make reset       delete saved sessions + config (~/.config/claudetui)"
+	@echo "  make reset       delete saved sessions + config (~/.config/tuai)"
 	@echo "  make version     show toolchain + dep versions"
 	@echo ""
 	@echo "Requires the 'claude' CLI on PATH (Claude Code) — auth & sessions handled by it."
@@ -61,8 +61,8 @@ clean:
 	rm -f $(BIN)
 
 reset:
-	@read -p "Delete all sessions and config in ~/.config/claudetui? [y/N] " ans && \
-		{ [ "$$ans" = "y" ] || [ "$$ans" = "Y" ]; } && rm -rf ~/.config/claudetui || echo "cancelled"
+	@read -p "Delete all sessions and config in ~/.config/tuai? [y/N] " ans && \
+		{ [ "$$ans" = "y" ] || [ "$$ans" = "Y" ]; } && rm -rf ~/.config/tuai || echo "cancelled"
 
 version:
 	@go version

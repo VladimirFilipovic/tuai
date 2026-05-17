@@ -2,8 +2,8 @@ package ui
 
 import (
 	tea "charm.land/bubbletea/v2"
-	"github.com/vladafilipovic/claudetui/internal/claude"
-	"github.com/vladafilipovic/claudetui/internal/storage"
+	"github.com/VladimirFilipovic/tuai/internal/claude"
+	"github.com/VladimirFilipovic/tuai/internal/storage"
 )
 
 type viewKind int
