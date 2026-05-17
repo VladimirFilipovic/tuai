@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 )
 
@@ -128,7 +129,7 @@ func saveLinux() (string, error) {
 // IsImagePath returns true if the path has an extension Claude can read as
 // an image attachment.
 func IsImagePath(p string) bool {
-	switch ext := filepath.Ext(p); ext {
+	switch strings.ToLower(filepath.Ext(p)) {
 	case ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp":
 		return true
 	}
