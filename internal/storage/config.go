@@ -10,6 +10,10 @@ type Config struct {
 	Theme string `json:"theme,omitempty"`
 	Model string `json:"model,omitempty"`
 	Vim   bool   `json:"vim,omitempty"`
+	// Appearance overrides the auto-detected terminal brightness used to pick
+	// the light/dark variant of each theme. "" or "auto" follows the terminal,
+	// "light" / "dark" force a specific variant.
+	Appearance string `json:"appearance,omitempty"`
 }
 
 func configPath() (string, error) {

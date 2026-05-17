@@ -16,12 +16,17 @@ type Role string
 const (
 	RoleUser      Role = "user"
 	RoleAssistant Role = "assistant"
+	RoleTool      Role = "tool"
 )
 
 type Message struct {
-	Role    Role      `json:"role"`
-	Content string    `json:"content"`
-	At      time.Time `json:"at"`
+	Role    Role   `json:"role"`
+	Content string `json:"content"`
+	// Tool carries the tool name when Role==RoleTool. Content holds the raw
+	// streaming-JSON input for that tool call so we can re-render it the
+	// same way the live stream did.
+	Tool string    `json:"tool,omitempty"`
+	At   time.Time `json:"at"`
 }
 
 type Session struct {
@@ -82,7 +87,10 @@ func (s *Store) Load(id string) (*Session, error) {
 		return nil, err
 	}
 	var sess Session
-	return &sess, json.Unmarshal(data, &sess)
+	if err := json.Unmarshal(data, &sess); err != nil {
+		return nil, err
+	}
+	return &sess, nil
 }
 
 func (s *Store) List() ([]*Session, error) {
