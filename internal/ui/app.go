@@ -38,6 +38,19 @@ type openModelPickerMsg struct{}
 type openThemePickerMsg struct{}
 type cycleAppearanceMsg struct{}
 
+// openPaletteKey reports whether msg is the command-palette shortcut. We
+// accept ctrl+p (universal) plus Cmd+P, which bubbletea v2 reports with
+// Mod=Super (Linux/Wayland, Kitty) or Mod=Meta (some macOS terminals).
+// msg.String() is unreliable here because it returns the typed text ("p")
+// when the terminal sends one alongside the modifier — see Keystroke().
+func openPaletteKey(msg tea.KeyPressMsg) bool {
+	switch msg.Keystroke() {
+	case "ctrl+p", "super+p", "meta+p":
+		return true
+	}
+	return false
+}
+
 func NewApp() *App {
 	store, err := storage.NewStore()
 	if err != nil {
@@ -112,6 +125,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case tea.KeyPressMsg:
+		// Cmd+P arrives as Mod=Super (or Meta) + Code='p' + Text="p", so
+		// msg.String() returns just "p" — losing the modifier. Keystroke()
+		// always emits the "super+p" / "meta+p" form, so check it first
+		// before the String() switch handles printable characters.
+		if openPaletteKey(msg) && (a.view == viewSessions || a.view == viewChat) {
+			return a, func() tea.Msg { return openCommandPaletteMsg{} }
+		}
 		switch msg.String() {
 		case "ctrl+c":
 			return a, tea.Quit
@@ -126,10 +146,6 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.themes.setSize(a.width, a.height)
 				a.view = viewThemes
 				return a, nil
-			}
-		case "ctrl+p", "cmd+p", "super+p":
-			if a.view == viewSessions || a.view == viewChat {
-				return a, func() tea.Msg { return openCommandPaletteMsg{} }
 			}
 		}
 

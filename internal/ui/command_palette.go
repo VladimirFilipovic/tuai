@@ -65,6 +65,11 @@ func (m commandPaletteModel) Init() tea.Cmd { return nil }
 func (m commandPaletteModel) Update(msg tea.Msg) (commandPaletteModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
+		// Toggle-close on the same shortcut that opens the palette. See
+		// openPaletteKey for why we check Keystroke() rather than String().
+		if openPaletteKey(msg) {
+			return m, func() tea.Msg { return commandPaletteCanceledMsg{} }
+		}
 		switch msg.String() {
 		case "j", "down":
 			m.cursor = (m.cursor + 1) % len(m.entries)
@@ -77,7 +82,7 @@ func (m commandPaletteModel) Update(msg tea.Msg) (commandPaletteModel, tea.Cmd) 
 		case "enter":
 			id := m.entries[m.cursor].id
 			return m, func() tea.Msg { return commandPalettePickedMsg{id: id} }
-		case "esc", "ctrl+c", "q", "ctrl+p", "cmd+p":
+		case "esc", "ctrl+c", "q":
 			return m, func() tea.Msg { return commandPaletteCanceledMsg{} }
 		}
 	}
