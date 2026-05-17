@@ -373,9 +373,12 @@ func (a *App) View() tea.View {
 	}
 	v := tea.NewView(content)
 	v.AltScreen = true
-	// Leave mouse mode off so terminals (Ghostty, iTerm2, …) keep native
-	// drag-select on the rendered output. Enabling CellMotion captures the
-	// drag and forces the user to hold ⌥/Shift to select text.
-	v.MouseMode = tea.MouseModeNone
+	// Capture mouse so the wheel scrolls the chat viewport instead of leaking
+	// through to the terminal's scrollback (which still shows pre-launch shell
+	// content on terminals that preserve history on the alt screen). The chat
+	// viewport handles MouseWheelMsg natively — we just need the events to
+	// arrive. Tradeoff: native drag-select stops working; users hold ⌥/Shift
+	// in Ghostty / iTerm2 / Terminal.app to bypass capture and select text.
+	v.MouseMode = tea.MouseModeCellMotion
 	return v
 }
