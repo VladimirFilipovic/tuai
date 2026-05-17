@@ -152,7 +152,7 @@ func (c *Client) Stream(ctx context.Context, prompt, resumeID string) <-chan Chu
 			if len(line) == 0 {
 				continue
 			}
-			c.dispatchLine(line, ch, ctx)
+			c.dispatchLine(ctx, line, ch)
 		}
 
 		// Wait for process to exit; surface stderr if non-zero.
@@ -178,7 +178,7 @@ func (c *Client) Stream(ctx context.Context, prompt, resumeID string) <-chan Chu
 }
 
 // dispatchLine parses a single stream-json line and forwards relevant events.
-func (c *Client) dispatchLine(line []byte, ch chan<- Chunk, ctx context.Context) {
+func (c *Client) dispatchLine(ctx context.Context, line []byte, ch chan<- Chunk) {
 	var ev streamLine
 	if err := json.Unmarshal(line, &ev); err != nil {
 		return
@@ -300,20 +300,20 @@ func expandAtRefs(prompt, cwd string) string {
 		// For images (and other binary files) don't try to inline content —
 		// just note the absolute path so Claude can Read it with its tools.
 		if isImageExt(path) {
-			atts.WriteString(fmt.Sprintf("\n\n[attached image: %s]\n", path))
+			fmt.Fprintf(&atts, "\n\n[attached image: %s]\n", path)
 			continue
 		}
 		if info.Size() > maxBytes {
-			atts.WriteString(fmt.Sprintf("\n\n--- @%s (skipped: %d bytes > %d limit) ---\n",
-				ref, info.Size(), maxBytes))
+			fmt.Fprintf(&atts, "\n\n--- @%s (skipped: %d bytes > %d limit) ---\n",
+				ref, info.Size(), maxBytes)
 			continue
 		}
 		data, err := os.ReadFile(path)
 		if err != nil {
 			continue
 		}
-		atts.WriteString(fmt.Sprintf("\n\n--- @%s ---\n%s\n--- end @%s ---\n",
-			ref, string(data), ref))
+		fmt.Fprintf(&atts, "\n\n--- @%s ---\n%s\n--- end @%s ---\n",
+			ref, string(data), ref)
 	}
 	if atts.Len() == 0 {
 		return prompt
@@ -330,7 +330,7 @@ type streamLine struct {
 	Model     string `json:"model,omitempty"`
 
 	// stream_event payload
-	Event streamInner `json:"event,omitempty"`
+	Event streamInner `json:"event"`
 
 	// result payload
 	IsError        bool    `json:"is_error,omitempty"`
@@ -342,8 +342,8 @@ type streamLine struct {
 
 type streamInner struct {
 	Type         string      `json:"type"`
-	Delta        deltaPart   `json:"delta,omitempty"`
-	ContentBlock contentPart `json:"content_block,omitempty"`
+	Delta        deltaPart   `json:"delta"`
+	ContentBlock contentPart `json:"content_block"`
 }
 
 type deltaPart struct {
