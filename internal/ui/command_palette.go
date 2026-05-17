@@ -13,6 +13,7 @@ type commandID int
 const (
 	cmdChangeTheme commandID = iota
 	cmdChangeModel
+	cmdToggleAppearance
 	cmdRenameSession
 	cmdNewSession
 	cmdClearSession
@@ -29,6 +30,7 @@ type paletteEntry struct {
 var paletteEntries = []paletteEntry{
 	{id: cmdChangeTheme, label: "Change theme", description: "Pick a color theme."},
 	{id: cmdChangeModel, label: "Change model", description: "Switch the Claude model."},
+	{id: cmdToggleAppearance, label: "Toggle appearance", description: "Cycle light / dark / auto."},
 	{id: cmdRenameSession, label: "Rename session", description: "Edit the current session's name."},
 	{id: cmdNewSession, label: "New session", description: "Start a fresh conversation."},
 	{id: cmdClearSession, label: "Clear session", description: "Remove all messages in this session.", chatOnly: true},

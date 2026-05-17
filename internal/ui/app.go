@@ -36,6 +36,7 @@ type App struct {
 
 type openModelPickerMsg struct{}
 type openThemePickerMsg struct{}
+type cycleAppearanceMsg struct{}
 
 func NewApp() *App {
 	store, err := storage.NewStore()
@@ -46,6 +47,9 @@ func NewApp() *App {
 
 	// Load persisted theme + model; ignore errors (use defaults).
 	if cfg, cerr := storage.LoadConfig(); cerr == nil {
+		if cfg.Appearance != "" {
+			SetAppearanceMode(cfg.Appearance)
+		}
 		if cfg.Theme != "" {
 			applyTheme(cfg.Theme)
 		}
@@ -182,6 +186,32 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.view = viewThemes
 		return a, nil
 
+	case cycleAppearanceMsg:
+		// auto → light → dark → auto
+		next := "light"
+		switch AppearanceMode() {
+		case "":
+			next = "light"
+		case "light":
+			next = "dark"
+		case "dark":
+			next = ""
+		}
+		SetAppearanceMode(next)
+		cur, _ := storage.LoadConfig()
+		cur.Appearance = next
+		_ = storage.SaveConfig(cur)
+		label := next
+		if label == "" {
+			label = "auto"
+		}
+		if a.view == viewChat {
+			a.chat.notice = "appearance: " + label
+			styleTextarea(&a.chat.textarea)
+			a.chat.refreshViewport()
+		}
+		return a, nil
+
 	case modelPickedMsg:
 		a.client.SetModel(msg.alias)
 		cur, _ := storage.LoadConfig()
@@ -278,6 +308,8 @@ func (a *App) runCommand(id commandID) tea.Cmd {
 		return func() tea.Msg { return openThemePickerMsg{} }
 	case cmdChangeModel:
 		return func() tea.Msg { return openModelPickerMsg{} }
+	case cmdToggleAppearance:
+		return func() tea.Msg { return cycleAppearanceMsg{} }
 	case cmdRenameSession:
 		// Figure out which session to rename: open one in chat, selected one
 		// on the sessions list. No-op if there's nothing to rename.

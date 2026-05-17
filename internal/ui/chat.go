@@ -630,6 +630,24 @@ func (m *chatModel) handleSlash(input string) tea.Cmd {
 	case "/theme":
 		return func() tea.Msg { return openThemePickerMsg{} }
 
+	case "/light", "/dark", "/auto":
+		mode := strings.TrimPrefix(cmd, "/")
+		SetAppearanceMode(mode)
+		cur, _ := storage.LoadConfig()
+		if mode == "auto" {
+			cur.Appearance = ""
+		} else {
+			cur.Appearance = mode
+		}
+		_ = storage.SaveConfig(cur)
+		if mode == "auto" {
+			m.notice = "appearance: auto (follows terminal)"
+		} else {
+			m.notice = "appearance: " + mode
+		}
+		m.refreshViewport()
+		return nil
+
 	case "/new":
 		if m.streaming {
 			return nil
@@ -666,7 +684,7 @@ func (m *chatModel) handleSlash(input string) tea.Cmd {
 		return nil
 
 	case "/help":
-		m.notice = "commands: /model [name] · /theme · /vim · /new · /clear · /help"
+		m.notice = "commands: /model [name] · /theme · /light · /dark · /auto · /vim · /new · /clear · /help"
 		m.refreshViewport()
 		return nil
 
