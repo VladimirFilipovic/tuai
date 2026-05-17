@@ -392,7 +392,20 @@ func (m chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 		}
 	}
 
-	m.viewport, vpCmd = m.viewport.Update(msg)
+	// The viewport's default keymap binds ctrl+u/ctrl+d/u/d/j/k/h/l/f/b/space
+	// to scrolling. Forwarding every key to it lets the viewport hijack
+	// keys the textarea needs (ctrl+u = delete-to-BOL, plain letters
+	// the user is typing, and cmd+backspace which terminals translate
+	// to ctrl+u). Only navigation keys we explicitly route here reach
+	// the viewport; non-key events (mouse wheel, animations) still flow.
+	if k, ok := msg.(tea.KeyPressMsg); ok {
+		switch k.String() {
+		case "pgup", "pgdown", "home", "end":
+			m.viewport, vpCmd = m.viewport.Update(msg)
+		}
+	} else {
+		m.viewport, vpCmd = m.viewport.Update(msg)
+	}
 	prevHeight := m.textarea.Height()
 	m.textarea, taCmd = m.textarea.Update(msg)
 	cmds = append(cmds, vpCmd, taCmd)
@@ -439,10 +452,15 @@ func (m *chatModel) insertImageRef(path string) {
 	m.relayout()
 }
 
-// pasteMinLines is the threshold above which a paste gets stowed under a
-// placeholder. Single- and short multi-line pastes (a snippet, a path, a
-// command) flow through untouched.
-const pasteMinLines = 4
+// Pastes are stowed under a placeholder when they're large enough that
+// having them inline would clutter the input bar — same threshold the
+// claude.ai web UI uses for its chips. Anything multi-line or longer than
+// ~200 chars qualifies; trivial pastes (a path, a single short snippet)
+// still flow through untouched.
+const (
+	pasteMinLines = 2
+	pasteMinChars = 200
+)
 
 // stowPaste decides whether a clipboard paste should be replaced with a
 // short placeholder in the input bar. Returns the placeholder + true when
@@ -450,14 +468,21 @@ const pasteMinLines = 4
 // untouched.
 func (m *chatModel) stowPaste(content string) (string, bool) {
 	lines := strings.Count(content, "\n") + 1
-	if lines < pasteMinLines {
+	if lines < pasteMinLines && len(content) < pasteMinChars {
 		return "", false
 	}
 	if m.pastes == nil {
 		m.pastes = map[string]string{}
 	}
 	m.pasteSeq++
-	placeholder := fmt.Sprintf("[Pasted text #%d +%d lines]", m.pasteSeq, lines)
+	// Use the more informative dimension for the chip label: line count
+	// for multi-line, char count for a long single-line paste (e.g. a URL).
+	var placeholder string
+	if lines >= pasteMinLines {
+		placeholder = fmt.Sprintf("[Pasted text #%d +%d lines]", m.pasteSeq, lines)
+	} else {
+		placeholder = fmt.Sprintf("[Pasted text #%d +%d chars]", m.pasteSeq, len(content))
+	}
 	m.pastes[placeholder] = content
 	return placeholder, true
 }
@@ -724,9 +749,7 @@ func (m *chatModel) refreshViewport() {
 	}
 }
 
-// padBottom appends blank rows so the viewport's last content row is never
-// flush against the input bar — that's what produced the stacked "│ │"
-// visual when a short message bubble sat right above the input border.
+// viewportBottomPad keeps the last bubble's left bar off the input bar.
 const viewportBottomPad = 1
 
 // streamStatus describes what Claude is currently doing — used as the label
@@ -768,15 +791,9 @@ func (m *chatModel) renderMessages() string {
 	if m.width == 0 {
 		return ""
 	}
-	wrap := m.width - 4
-	if wrap < 20 {
-		wrap = 20
-	}
+	wrap := max(m.width-4, 20)
 	// Inner width inside the bubble: margin-left (2) + left border (1) + horizontal padding (4).
-	bubbleInner := wrap - 7
-	if bubbleInner < 12 {
-		bubbleInner = 12
-	}
+	bubbleInner := max(wrap-7, 12)
 
 	var b strings.Builder
 
@@ -850,7 +867,7 @@ func (m *chatModel) renderMessages() string {
 
 	// Always end on blank rows so the last bubble's left bar never sits
 	// flush against the input bar's left bar.
-	for i := 0; i < viewportBottomPad; i++ {
+	for range viewportBottomPad {
 		b.WriteString("\n")
 	}
 
@@ -904,10 +921,7 @@ func renderToolInput(name, raw string, wrap int) string {
 		return dim.Render("    " + preview)
 	}
 
-	innerWrap := wrap - 6
-	if innerWrap < 20 {
-		innerWrap = 20
-	}
+	innerWrap := max(wrap-6, 20)
 
 	switch strings.ToLower(name) {
 	case "edit":
@@ -940,7 +954,7 @@ func previewPartialJSON(raw string, width int) string {
 	// we re-render properly through the JSON path.
 	r := strings.NewReplacer(`\n`, " ", `\t`, " ", `\"`, `"`)
 	s := r.Replace(raw)
-	if width > 0 && lipglossWidth(s) > width {
+	if width > 0 && lipgloss.Width(s) > width {
 		runes := []rune(s)
 		if len(runes) > width-1 {
 			s = string(runes[:width-1]) + "…"
@@ -948,8 +962,6 @@ func previewPartialJSON(raw string, width int) string {
 	}
 	return s
 }
-
-func lipglossWidth(s string) int { return lipgloss.Width(s) }
 
 func renderEditInput(f map[string]any, wrap int) string {
 	var b strings.Builder
@@ -1006,20 +1018,9 @@ func renderWriteInput(f map[string]any, wrap int) string {
 	if content == "" {
 		return strings.TrimRight(b.String(), "\n")
 	}
-	lines := strings.Split(content, "\n")
-	const maxLines = 12
-	preview := lines
-	truncated := false
-	if len(preview) > maxLines {
-		preview = preview[:maxLines]
-		truncated = true
-	}
 	dim := lipgloss.NewStyle().Foreground(CurrentTheme().Dim())
-	for _, ln := range preview {
+	for _, ln := range strings.Split(content, "\n") {
 		b.WriteString(dim.Render("    "+truncateLine(ln, wrap)) + "\n")
-	}
-	if truncated {
-		b.WriteString(dim.Render(fmt.Sprintf("    … +%d more lines", len(lines)-maxLines)) + "\n")
 	}
 	return strings.TrimRight(b.String(), "\n")
 }
@@ -1251,7 +1252,7 @@ var resetSGR = regexp.MustCompile(`\x1b\[0?m`)
 // into a rendered string without round-tripping through lipgloss (which would
 // emit its own reset and re-introduce the same bleed).
 func bubbleBgSGR() string {
-	if terminalIsDark {
+	if isDark() {
 		return "\x1b[48;2;31;33;37m" // #1f2125
 	}
 	return "\x1b[48;2;235;228;208m" // #ebe4d0
@@ -1430,7 +1431,7 @@ func (m chatModel) View() string {
 	b.WriteString(indentLines(input, "  "))
 	b.WriteString("\n")
 
-	helpText := "enter send • alt+enter/ctrl+j newline • ctrl+v paste • ctrl+p palette • /model /theme /vim /new /clear /help • esc back"
+	helpText := "enter send • alt+enter/ctrl+j newline • ctrl+v paste • ctrl+p palette • /model /theme /light /dark /auto /vim /new /clear /help • esc back"
 	if m.vim != nil {
 		// Surface the active mode prominently — without it the user has no
 		// way to tell why h/j/k/l are or aren't being typed as characters.
@@ -1463,10 +1464,7 @@ func (m *chatModel) relayout() {
 	}
 	taContent := m.desiredInputHeight()
 	// Layout: header (1) + divider (1) + textarea (taContent) + help (1).
-	vpHeight := h - 3 - taContent
-	if vpHeight < 3 {
-		vpHeight = 3
-	}
+	vpHeight := max(h-3-taContent, 3)
 	m.viewport.SetWidth(w)
 	m.viewport.SetHeight(vpHeight)
 	m.textarea.SetWidth(w - 4)
@@ -1476,11 +1474,5 @@ func (m *chatModel) relayout() {
 
 func (m *chatModel) desiredInputHeight() int {
 	lines := strings.Count(m.textarea.Value(), "\n") + 1
-	if lines < minInputLines {
-		lines = minInputLines
-	}
-	if lines > maxInputLines {
-		lines = maxInputLines
-	}
-	return lines
+	return min(max(lines, minInputLines), maxInputLines)
 }
