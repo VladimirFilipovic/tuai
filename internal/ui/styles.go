@@ -12,6 +12,22 @@ import (
 // case; styles get rebuilt once we know for sure.
 var terminalIsDark = true
 
+// appearanceMode overrides the detected terminal brightness. "" means follow
+// the terminal (auto); "light" / "dark" force that variant regardless.
+var appearanceMode = ""
+
+// isDark reports whether dark palettes/styles should be used. The user's
+// appearance override wins; otherwise we follow the detected terminal bg.
+func isDark() bool {
+	switch appearanceMode {
+	case "dark":
+		return true
+	case "light":
+		return false
+	}
+	return terminalIsDark
+}
+
 // SetTerminalIsDark records the detected terminal brightness and rebuilds
 // the style cache. Called from the bubbletea Update on BackgroundColorMsg.
 func SetTerminalIsDark(dark bool) {
@@ -22,10 +38,29 @@ func SetTerminalIsDark(dark bool) {
 	rebuildStyles()
 }
 
+// SetAppearanceMode sets the user's appearance override ("", "auto", "light",
+// "dark") and rebuilds the style cache. "" and "auto" are equivalent.
+func SetAppearanceMode(mode string) {
+	if mode == "auto" {
+		mode = ""
+	}
+	if mode != "" && mode != "light" && mode != "dark" {
+		return
+	}
+	if appearanceMode == mode {
+		return
+	}
+	appearanceMode = mode
+	rebuildStyles()
+}
+
+// AppearanceMode returns the current override ("" / "light" / "dark").
+func AppearanceMode() string { return appearanceMode }
+
 // subtleBg returns the bubble background tint — a small step away from the
 // terminal background, picked to read as "shaded" without fighting the theme.
 func subtleBg() color.Color {
-	if terminalIsDark {
+	if isDark() {
 		return lipgloss.Color("#1f2125")
 	}
 	return lipgloss.Color("#ebe4d0")

@@ -114,7 +114,7 @@ func highlightCode(code, lang string, wrapWidth int) string {
 	}
 	lexer = chroma.Coalesce(lexer)
 
-	style := styles.Get(chromaStyleForTerminal())
+	style := styles.Get(CurrentTheme().Chroma())
 	if style == nil {
 		style = styles.Fallback
 	}
@@ -156,18 +156,6 @@ func wrapCodeBlock(rendered, lang string, wrapWidth int) string {
 	}
 	b.WriteString("  " + hr)
 	return b.String()
-}
-
-// chromaStyleForTerminal picks a chroma style appropriate for the terminal's
-// brightness. The theme's `chroma` field assumes a dark background (monokai,
-// dracula, gruvbox, …) — those tokens are unreadable on the light subtleBg
-// we use for light terminals. Swap in a light style there so code stays
-// scannable regardless of the user's terminal.
-func chromaStyleForTerminal() string {
-	if terminalIsDark {
-		return CurrentTheme().Chroma()
-	}
-	return "github"
 }
 
 // isDiffLang reports whether a fence's language tag should be rendered as a
