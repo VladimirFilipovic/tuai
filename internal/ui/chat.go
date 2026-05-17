@@ -325,9 +325,9 @@ func (m chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 		case msg.err != nil:
 			m.streaming = false
 			m.err = msg.err
+			m.persistTools()
 			m.pending = ""
 			m.thinking = ""
-			m.tools = nil
 			m.cancel = nil
 			m.refreshViewport()
 
@@ -335,6 +335,7 @@ func (m chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 			m.streaming = false
 			m.lastCost = msg.cost
 			m.lastDur = msg.durMs
+			m.persistTools()
 			if m.pending != "" {
 				m.session.Messages = append(m.session.Messages, storage.Message{
 					Role:    storage.RoleAssistant,
@@ -345,7 +346,6 @@ func (m chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 				_ = m.store.Save(m.session)
 			}
 			m.thinking = ""
-			m.tools = nil
 			m.cancel = nil
 			m.refreshViewport()
 
@@ -695,6 +695,27 @@ func (m *chatModel) handleSlash(input string) tea.Cmd {
 	}
 }
 
+// persistTools appends any live tool events from the current turn to the
+// session as RoleTool messages, then clears the live buffer. Called when the
+// turn ends — on `done` or on error — so the user keeps a permanent record of
+// what Claude ran even after the spinner goes away.
+func (m *chatModel) persistTools() {
+	if len(m.tools) == 0 {
+		return
+	}
+	now := time.Now()
+	for _, t := range m.tools {
+		m.session.Messages = append(m.session.Messages, storage.Message{
+			Role:    storage.RoleTool,
+			Tool:    t.name,
+			Content: t.input,
+			At:      now,
+		})
+	}
+	m.tools = nil
+	_ = m.store.Save(m.session)
+}
+
 func (m *chatModel) refreshViewport() {
 	wasAtBottom := m.atBottom
 	m.viewport.SetContent(m.renderMessages())
@@ -777,6 +798,8 @@ func (m *chatModel) renderMessages() string {
 			b.WriteString("  " + label + ts + "\n")
 			body := padLinesToWidth(renderMarkdown(msg.Content, bubbleInner), bubbleInner)
 			b.WriteString(shadeBubble(s.AssistantBubble.Render(body)) + "\n")
+		case storage.RoleTool:
+			b.WriteString(renderToolBlock(toolEvent{name: msg.Tool, input: msg.Content}, wrap) + "\n")
 		}
 		if i < len(m.session.Messages)-1 || m.streaming || m.pending != "" {
 			b.WriteString("\n")
