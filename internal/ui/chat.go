@@ -265,7 +265,9 @@ func (m chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 		case "up":
 			// Recall the previous user message when on the top line. If the
 			// cursor is anywhere below row 0 we let the textarea move the
-			// cursor up within the input instead.
+			// cursor up within the input instead. Viewport scrolling is on
+			// PgUp/PgDn/Home/End and the mouse wheel — arrows stay history-
+			// only so the user can recall past messages with one keystroke.
 			if m.textarea.Line() == 0 && m.historyUp() {
 				return m, nil
 			}
@@ -398,22 +400,37 @@ func (m chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 	// the user is typing, and cmd+backspace which terminals translate
 	// to ctrl+u). Only navigation keys we explicitly route here reach
 	// the viewport; non-key events (mouse wheel, animations) still flow.
-	if k, ok := msg.(tea.KeyPressMsg); ok {
+	switch k := msg.(type) {
+	case tea.KeyPressMsg:
 		switch k.String() {
 		case "pgup", "pgdown", "home", "end":
 			m.viewport, vpCmd = m.viewport.Update(msg)
 		}
-	} else {
+	case tea.MouseWheelMsg:
+		// Wheel is for the chat viewport only. The textarea wraps its own
+		// internal viewport.Model which also responds to MouseWheelMsg —
+		// forwarding the wheel to the textarea makes its internal viewport
+		// scroll and yank the caret along, which reads as "wheel moves my
+		// cursor instead of scrolling the chat". Eat the wheel here so the
+		// textarea never sees it.
+		m.viewport, vpCmd = m.viewport.Update(msg)
+		m.atBottom = m.viewport.AtBottom()
+		prevHeight := m.textarea.Height()
+		if want := m.desiredInputHeight(); want != prevHeight {
+			m.relayout()
+		}
+		return m, vpCmd
+	default:
 		m.viewport, vpCmd = m.viewport.Update(msg)
 	}
 	prevHeight := m.textarea.Height()
 	m.textarea, taCmd = m.textarea.Update(msg)
 	cmds = append(cmds, vpCmd, taCmd)
 
-	// Track whether user is pinned to bottom
-	if m.viewport.AtBottom() {
-		m.atBottom = true
-	}
+	// Track whether user is pinned to bottom. Must sync both ways: when the
+	// user scrolls up (mouse wheel, pgup, etc.) we need to drop the flag so
+	// the next stream chunk's refreshViewport doesn't snap them back down.
+	m.atBottom = m.viewport.AtBottom()
 
 	// Grow/shrink the input bar to match its current content.
 	if want := m.desiredInputHeight(); want != prevHeight {
@@ -1431,7 +1448,7 @@ func (m chatModel) View() string {
 	b.WriteString(indentLines(input, "  "))
 	b.WriteString("\n")
 
-	helpText := "enter send • alt+enter/ctrl+j newline • ctrl+v paste • ctrl+p palette • /model /theme /light /dark /auto /vim /new /clear /help • esc back"
+	helpText := "enter send • alt+enter/ctrl+j newline • ↑↓ history • pgup/pgdn scroll • wheel scroll • ctrl+v paste • ctrl+p palette • /help • esc back"
 	if m.vim != nil {
 		// Surface the active mode prominently — without it the user has no
 		// way to tell why h/j/k/l are or aren't being typed as characters.
