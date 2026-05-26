@@ -115,6 +115,11 @@ type chatModel struct {
 	// keypresses ahead of the textarea; the textarea still handles every
 	// key in Insert mode (vim returns "not consumed" there).
 	vim *vimpkg.Editor
+
+	// ac powers the @-mention path autocomplete. Activates whenever the
+	// cursor sits inside an @-fragment; up/down/tab/enter/esc are routed
+	// here ahead of the textarea while it's open.
+	ac pathAutocompleteModel
 }
 
 type chunkMsg struct {
@@ -255,6 +260,29 @@ func (m chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 		if m.vim != nil {
 			if m.vim.HandleKey(&m.textarea, msg.String()) {
 				m.refreshViewport()
+				return m, nil
+			}
+		}
+		// Path autocomplete intercepts nav / accept / dismiss keys while
+		// the popup is open. Plain typing still flows through to the
+		// textarea below; the popup refreshes from textarea state at the
+		// end of Update so each new character re-filters the matches.
+		if m.ac.active {
+			switch msg.String() {
+			case "up", "ctrl+p":
+				m.ac.moveUp()
+				return m, nil
+			case "down", "ctrl+n":
+				m.ac.moveDown()
+				return m, nil
+			case "tab", "enter":
+				if m.ac.accept(&m.textarea) {
+					m.relayout()
+					return m, nil
+				}
+			case "esc":
+				m.ac.close()
+				m.relayout()
 				return m, nil
 			}
 		}
@@ -477,6 +505,7 @@ func (m chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 		m.viewport, vpCmd = m.viewport.Update(msg)
 	}
 	prevHeight := m.textarea.Height()
+	prevAcHeight := m.ac.height()
 	m.textarea, taCmd = m.textarea.Update(msg)
 	cmds = append(cmds, vpCmd, taCmd)
 
@@ -485,8 +514,17 @@ func (m chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 	// the next stream chunk's refreshViewport doesn't snap them back down.
 	m.atBottom = m.viewport.AtBottom()
 
-	// Grow/shrink the input bar to match its current content.
-	if want := m.desiredInputHeight(); want != prevHeight {
+	// Refresh autocomplete state from the (possibly updated) textarea. Only
+	// react to key events — mouse and timer messages can't change cursor or
+	// value, and refreshing on every spinner tick would re-stat the disk.
+	if _, isKey := msg.(tea.KeyPressMsg); isKey {
+		m.ac.refresh(m.textarea)
+	}
+
+	// Grow/shrink the input bar to match its current content. Also relayout
+	// when the autocomplete popup opens/closes/resizes so the viewport gives
+	// up (or reclaims) the rows it needs.
+	if want := m.desiredInputHeight(); want != prevHeight || m.ac.height() != prevAcHeight {
 		m.relayout()
 	}
 
@@ -1532,11 +1570,18 @@ func (m chatModel) View() string {
 
 	b.WriteString(m.viewport.View())
 	b.WriteString("\n")
+	if m.ac.active {
+		b.WriteString(m.ac.view(m.width))
+		b.WriteString("\n")
+	}
 	input := renderInputArea(m.textarea, m.width)
 	b.WriteString(indentLines(input, "  "))
 	b.WriteString("\n")
 
 	helpText := "enter send • alt+enter/ctrl+j newline • ↑↓ history • pgup/pgdn scroll • wheel scroll • ctrl+v paste • ctrl+p palette • /help • esc back"
+	if m.ac.active {
+		helpText = "↑↓ pick • tab/enter accept • esc dismiss"
+	}
 	if m.vim != nil {
 		// Surface the active mode prominently — without it the user has no
 		// way to tell why h/j/k/l are or aren't being typed as characters.
@@ -1568,8 +1613,11 @@ func (m *chatModel) relayout() {
 		return
 	}
 	taContent := m.desiredInputHeight()
-	// Layout: header (1) + divider (1) + textarea (taContent) + help (1).
-	vpHeight := max(h-3-taContent, 3)
+	acHeight := m.ac.height()
+	// Layout: header (1) + divider (1) + autocomplete (acHeight) + textarea
+	// (taContent) + help (1). The autocomplete eats viewport rows when open;
+	// the viewport reclaims them once it closes.
+	vpHeight := max(h-3-taContent-acHeight, 3)
 	m.viewport.SetWidth(w)
 	m.viewport.SetHeight(vpHeight)
 	m.textarea.SetWidth(w - 4)
