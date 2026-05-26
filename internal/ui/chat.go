@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"charm.land/bubbles/v2/spinner"
@@ -20,6 +22,42 @@ import (
 	"github.com/VladimirFilipovic/tuai/internal/storage"
 	vimpkg "github.com/VladimirFilipovic/tuai/internal/vim"
 )
+
+// Mouse diagnostics: when TUAI_DEBUG_MOUSE=1 is set, every mouse-flavoured
+// message that lands in chat.Update gets appended to /tmp/tuai-mouse.log
+// together with a timestamp and the message's concrete Go type. Lets us
+// figure out what a real terminal (Ghostty, iTerm2, …) actually sends when
+// you turn the wheel — independently of the bubbletea decoder's choices.
+var (
+	mouseLogOnce sync.Once
+	mouseLogF    *os.File
+	mouseLogOn   bool
+)
+
+func mouseLog(msg tea.Msg) {
+	mouseLogOnce.Do(func() {
+		if os.Getenv("TUAI_DEBUG_MOUSE") != "1" {
+			return
+		}
+		f, err := os.OpenFile("/tmp/tuai-mouse.log",
+			os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		if err != nil {
+			return
+		}
+		mouseLogF = f
+		mouseLogOn = true
+		fmt.Fprintf(mouseLogF, "\n--- session start %s ---\n", time.Now().Format(time.RFC3339))
+	})
+	if !mouseLogOn {
+		return
+	}
+	switch m := msg.(type) {
+	case tea.MouseMsg:
+		mu := m.Mouse()
+		fmt.Fprintf(mouseLogF, "%s  %-20T  btn=%d(%s) x=%d y=%d mod=%v str=%q\n",
+			time.Now().Format("15:04:05.000"), msg, mu.Button, mu.Button, mu.X, mu.Y, mu.Mod, m.String())
+	}
+}
 
 const (
 	// Textarea starts at minInputLines rows so the input feels roomy and
@@ -168,6 +206,7 @@ func (m chatModel) Init() tea.Cmd {
 }
 
 func (m chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
+	mouseLog(msg)
 	var cmds []tea.Cmd
 	var vpCmd, taCmd, spCmd tea.Cmd
 
@@ -406,20 +445,34 @@ func (m chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 		case "pgup", "pgdown", "home", "end":
 			m.viewport, vpCmd = m.viewport.Update(msg)
 		}
-	case tea.MouseWheelMsg:
-		// Wheel is for the chat viewport only. The textarea wraps its own
-		// internal viewport.Model which also responds to MouseWheelMsg —
-		// forwarding the wheel to the textarea makes its internal viewport
-		// scroll and yank the caret along, which reads as "wheel moves my
-		// cursor instead of scrolling the chat". Eat the wheel here so the
-		// textarea never sees it.
-		m.viewport, vpCmd = m.viewport.Update(msg)
-		m.atBottom = m.viewport.AtBottom()
-		prevHeight := m.textarea.Height()
-		if want := m.desiredInputHeight(); want != prevHeight {
-			m.relayout()
+	case tea.MouseMsg:
+		// Catch every flavour of mouse message — wheel, click, motion,
+		// release — so none of them slip through to the textarea's inner
+		// viewport. The inner viewport scrolls horizontally on wheel-left /
+		// wheel-right (Mac trackpad two-finger swipe) and on shift+wheel,
+		// which the user reads as "the mouse moves my cursor sideways
+		// instead of scrolling the chat".
+		//
+		// Some terminal/decoder combinations report wheel buttons via
+		// MouseClickMsg instead of MouseWheelMsg; re-cast to MouseWheelMsg
+		// so the chat viewport reliably treats them as scroll input.
+		mouse := k.Mouse()
+		switch mouse.Button {
+		case tea.MouseWheelUp, tea.MouseWheelDown,
+			tea.MouseWheelLeft, tea.MouseWheelRight:
+			m.viewport, vpCmd = m.viewport.Update(tea.MouseWheelMsg(mouse))
+			m.atBottom = m.viewport.AtBottom()
+			prevHeight := m.textarea.Height()
+			if want := m.desiredInputHeight(); want != prevHeight {
+				m.relayout()
+			}
+			return m, vpCmd
 		}
-		return m, vpCmd
+		// Non-wheel mouse events (clicks, motion, release): swallow.
+		// Nothing in this view positions the caret via mouse, and forwarding
+		// them lets the textarea's inner viewport eat them as scroll input
+		// on terminals that bundle a click with their wheel reports.
+		return m, nil
 	default:
 		m.viewport, vpCmd = m.viewport.Update(msg)
 	}
