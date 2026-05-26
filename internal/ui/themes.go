@@ -73,10 +73,13 @@ var Themes = []Theme{
 			chroma: "monokai",
 		},
 		Light: Palette{
-			accent: "#d97706", user: "#2563eb", assistant: "#16a34a",
-			dim: "#71717a", border: "#d4d4d8", errFg: "#dc2626",
-			codeBg: "#f8f8f8", codeFg: "#1f2937",
-			chroma: "github",
+			// Soft, washed-out warmth so the cream page bg never fights the
+			// brand. Terracotta accent + dusty blue + sage green keep the
+			// opencode identity but drop the saturation so chips read pastel.
+			accent: "#c97a4a", user: "#6b95a8", assistant: "#9aa66e",
+			dim: "#a89684", border: "#e6d9b8", errFg: "#c25656",
+			codeBg: "#fbf1c7", codeFg: "#3c3836",
+			chroma: "gruvbox-light",
 		},
 	},
 	{
@@ -89,8 +92,8 @@ var Themes = []Theme{
 			chroma: "tokyonight-moon",
 		},
 		Light: Palette{
-			accent: "#2e7de9", user: "#9854f1", assistant: "#587539",
-			dim: "#848cb5", border: "#b4b5b9", errFg: "#f52a65",
+			accent: "#8aa6e0", user: "#b59ce0", assistant: "#9bb37a",
+			dim: "#a5acc4", border: "#d0d2d8", errFg: "#e58497",
 			codeBg: "#e1e2e7", codeFg: "#3760bf",
 			chroma: "tokyonight-day",
 		},
@@ -105,8 +108,8 @@ var Themes = []Theme{
 			chroma: "catppuccin-mocha",
 		},
 		Light: Palette{
-			accent: "#1e66f5", user: "#8839ef", assistant: "#40a02b",
-			dim: "#6c6f85", border: "#ccd0da", errFg: "#d20f39",
+			accent: "#7287fd", user: "#c6a0f6", assistant: "#8ec07c",
+			dim: "#9ca0b0", border: "#dce0e8", errFg: "#e88a9c",
 			codeBg: "#eff1f5", codeFg: "#4c4f69",
 			chroma: "catppuccin-latte",
 		},
@@ -121,8 +124,8 @@ var Themes = []Theme{
 			chroma: "dracula",
 		},
 		Light: Palette{
-			accent: "#644ac9", user: "#a4205f", assistant: "#14710a",
-			dim: "#635d62", border: "#cfcfde", errFg: "#cb3a2a",
+			accent: "#a08fdc", user: "#d693b8", assistant: "#86b884",
+			dim: "#a09aa0", border: "#e0dde8", errFg: "#dc8c84",
 			codeBg: "#f1f1f0", codeFg: "#1f1f1f",
 			chroma: "github",
 		},
@@ -137,8 +140,8 @@ var Themes = []Theme{
 			chroma: "gruvbox",
 		},
 		Light: Palette{
-			accent: "#427b58", user: "#8f3f71", assistant: "#79740e",
-			dim: "#7c6f64", border: "#d5c4a1", errFg: "#9d0006",
+			accent: "#8ab09a", user: "#c098a8", assistant: "#b8b46a",
+			dim: "#a89684", border: "#e6d9b8", errFg: "#c25656",
 			codeBg: "#fbf1c7", codeFg: "#3c3836",
 			chroma: "gruvbox-light",
 		},
@@ -153,8 +156,8 @@ var Themes = []Theme{
 			chroma: "monokai",
 		},
 		Light: Palette{
-			accent: "#029cdd", user: "#7058be", assistant: "#519c00",
-			dim: "#797f88", border: "#dddddd", errFg: "#f9005a",
+			accent: "#7cb6d4", user: "#a89bcf", assistant: "#9cbf72",
+			dim: "#a5abb3", border: "#e2e2e2", errFg: "#e88aa8",
 			codeBg: "#fafafa", codeFg: "#2c292d",
 			chroma: "monokailight",
 		},
@@ -169,8 +172,8 @@ var Themes = []Theme{
 			chroma: "onedark",
 		},
 		Light: Palette{
-			accent: "#4078f2", user: "#a626a4", assistant: "#50a14f",
-			dim: "#a0a1a7", border: "#d4d4d4", errFg: "#e45649",
+			accent: "#8ab0e8", user: "#c89bc6", assistant: "#9cc09a",
+			dim: "#b0b1b6", border: "#dedede", errFg: "#dc9088",
 			codeBg: "#fafafa", codeFg: "#383a42",
 			chroma: "github",
 		},
@@ -185,8 +188,8 @@ var Themes = []Theme{
 			chroma: "doom-one2",
 		},
 		Light: Palette{
-			accent: "#205ea6", user: "#5e409d", assistant: "#66800b",
-			dim: "#6f6e69", border: "#cecdc3", errFg: "#af3029",
+			accent: "#7b9cc8", user: "#a092c8", assistant: "#b0b478",
+			dim: "#9c9a94", border: "#e0dcc8", errFg: "#cd8a7e",
 			codeBg: "#fffcf0", codeFg: "#100f0f",
 			chroma: "github",
 		},
@@ -201,8 +204,8 @@ var Themes = []Theme{
 			chroma: "nord",
 		},
 		Light: Palette{
-			accent: "#0099b8", user: "#1f5fbf", assistant: "#0a8554",
-			dim: "#6b7c8a", border: "#c0d4e3", errFg: "#b3000d",
+			accent: "#7cc0d0", user: "#90b0d8", assistant: "#86c4a8",
+			dim: "#9caab5", border: "#d8e4ec", errFg: "#d88a90",
 			codeBg: "#f0f8ff", codeFg: "#0c141f",
 			chroma: "github",
 		},
