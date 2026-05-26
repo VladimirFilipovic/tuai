@@ -1323,9 +1323,44 @@ var resetSGR = regexp.MustCompile(`\x1b\[0?m`)
 // emit its own reset and re-introduce the same bleed).
 func bubbleBgSGR() string {
 	if isDark() {
-		return "\x1b[48;2;31;33;37m" // #1f2125
+		return "\x1b[48;2;28;30;34m" // #1c1e22
 	}
-	return "\x1b[48;2;235;228;208m" // #ebe4d0
+	return "\x1b[48;2;241;235;217m" // #f1ebd9
+}
+
+// pageBgSGR is the SGR for the chat *page* background — what fills the area
+// around bubbles, gap rows, label margins, and any spot the viewport doesn't
+// otherwise paint. Picked one step darker than the bubble bg so bubbles still
+// read as raised cards on the page in both light and dark modes.
+func pageBgSGR() string {
+	if isDark() {
+		return "\x1b[48;2;22;24;28m" // #16181c
+	}
+	return "\x1b[48;2;236;228;205m" // #ece4cd
+}
+
+// shadePage paints the page background across every line of the rendered
+// chat view. Each line gets right-padded to width with bg-coloured spaces,
+// and every internal SGR reset re-applies the page bg so inner styled spans
+// don't punch holes back to the terminal default. Bubble lines have already
+// been through shadeBubble, so their internal bg is bubble-tone; that wins
+// over the page tone we splice in here because shadeBubble's bg sequence
+// follows ours in the byte stream.
+func shadePage(rendered string, width int) string {
+	bg := pageBgSGR()
+	const reset = "\x1b[0m"
+	withBg := func(m string) string { return m + bg }
+
+	lines := strings.Split(rendered, "\n")
+	for i, ln := range lines {
+		processed := resetSGR.ReplaceAllStringFunc(ln, withBg)
+		var pad string
+		if w := lipgloss.Width(ln); w < width {
+			pad = strings.Repeat(" ", width-w)
+		}
+		lines[i] = bg + processed + bg + pad + reset
+	}
+	return strings.Join(lines, "\n")
 }
 
 // shadeBubble re-applies the bubble's subtle background after every SGR
@@ -1515,7 +1550,7 @@ func (m chatModel) View() string {
 		b.WriteString(lipgloss.NewStyle().MaxWidth(m.width).Render(s.Help.Render(helpText)))
 	}
 
-	return b.String()
+	return shadePage(b.String(), m.width)
 }
 
 func (m *chatModel) setSize(w, h int) {

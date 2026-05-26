@@ -61,9 +61,9 @@ func AppearanceMode() string { return appearanceMode }
 // terminal background, picked to read as "shaded" without fighting the theme.
 func subtleBg() color.Color {
 	if isDark() {
-		return lipgloss.Color("#1f2125")
+		return lipgloss.Color("#1c1e22")
 	}
-	return lipgloss.Color("#ebe4d0")
+	return lipgloss.Color("#f1ebd9")
 }
 
 type styleSet struct {
