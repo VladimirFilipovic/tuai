@@ -96,6 +96,15 @@ type chatModel struct {
 	lastCost   float64
 	lastDur    int64
 
+	// staticCache memoizes the rendered block of all persisted messages.
+	// renderMessages runs on every spinner tick and stream chunk; re-running
+	// chroma/markdown/shadeBubble over the whole history each time made long
+	// conversations crawl. Persisted messages only change by appending (or a
+	// /clear), so we rebuild only when staticKey — a digest of message count,
+	// width, and active theme/appearance — changes.
+	staticCache string
+	staticKey   string
+
 	// Pastes maps a placeholder token shown in the textarea (e.g. "[Pasted
 	// text #1 +12 lines]") back to the full content. Multi-line pastes get
 	// stowed here so the input bar stays scannable; on send the placeholders
@@ -909,26 +918,13 @@ func (m *chatModel) renderMessages() string {
 		b.WriteString("\n  " + s.Subtle.Render("Ask anything. Code, design, debugging, whatever you need.") + "\n")
 	}
 
-	for i, msg := range m.session.Messages {
-		switch msg.Role {
-		case storage.RoleUser:
-			label := s.UserLabel.Render("You")
-			ts := s.SessionMeta.Render("  " + msg.At.Format("15:04"))
-			b.WriteString("  " + label + ts + "\n")
-			wrapped := padLinesToWidth(wordwrapKeepBlank(msg.Content, bubbleInner), bubbleInner)
-			b.WriteString(shadeBubble(s.UserBubble.Render(wrapped)) + "\n")
-		case storage.RoleAssistant:
-			label := s.AssistantLabel.Render("Claude")
-			ts := s.SessionMeta.Render("  " + msg.At.Format("15:04"))
-			b.WriteString("  " + label + ts + "\n")
-			body := padLinesToWidth(renderMarkdown(msg.Content, bubbleInner), bubbleInner)
-			b.WriteString(shadeBubble(s.AssistantBubble.Render(body)) + "\n")
-		case storage.RoleTool:
-			b.WriteString(renderToolBlock(toolEvent{name: msg.Tool, input: msg.Content}, wrap) + "\n")
-		}
-		if i < len(m.session.Messages)-1 || m.streaming || m.pending != "" {
-			b.WriteString("\n")
-		}
+	// Persisted messages render through a memo: identical between ticks/chunks
+	// until something appends or the layout/theme changes.
+	static := m.renderStaticMessages(wrap, bubbleInner)
+	b.WriteString(static)
+	// A blank separator divides the last persisted message from the live tail.
+	if static != "" && (m.streaming || m.pending != "") {
+		b.WriteString("\n")
 	}
 
 	if m.streaming || m.pending != "" || m.thinking != "" || len(m.tools) > 0 {
@@ -980,6 +976,45 @@ func (m *chatModel) renderMessages() string {
 	}
 
 	return b.String()
+}
+
+// renderStaticMessages renders the persisted-message block, memoized. The
+// blocks are separated by a blank line; there is no trailing blank (the caller
+// adds one before the live tail when needed). The cache invalidates whenever
+// the message count, wrap width, or active theme/appearance changes — the only
+// inputs that can alter how a persisted (immutable) message draws.
+func (m *chatModel) renderStaticMessages(wrap, bubbleInner int) string {
+	key := fmt.Sprintf("%d|%d|%s|%t", len(m.session.Messages), wrap, CurrentTheme().Name, isDark())
+	if key == m.staticKey {
+		return m.staticCache
+	}
+
+	var b strings.Builder
+	for i, msg := range m.session.Messages {
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		switch msg.Role {
+		case storage.RoleUser:
+			label := s.UserLabel.Render("You")
+			ts := s.SessionMeta.Render("  " + msg.At.Format("15:04"))
+			b.WriteString("  " + label + ts + "\n")
+			wrapped := padLinesToWidth(wordwrapKeepBlank(msg.Content, bubbleInner), bubbleInner)
+			b.WriteString(shadeBubble(s.UserBubble.Render(wrapped)) + "\n")
+		case storage.RoleAssistant:
+			label := s.AssistantLabel.Render("Claude")
+			ts := s.SessionMeta.Render("  " + msg.At.Format("15:04"))
+			b.WriteString("  " + label + ts + "\n")
+			body := padLinesToWidth(renderMarkdown(msg.Content, bubbleInner), bubbleInner)
+			b.WriteString(shadeBubble(s.AssistantBubble.Render(body)) + "\n")
+		case storage.RoleTool:
+			b.WriteString(renderToolBlock(toolEvent{name: msg.Tool, input: msg.Content}, wrap) + "\n")
+		}
+	}
+
+	m.staticCache = b.String()
+	m.staticKey = key
+	return m.staticCache
 }
 
 func renderThinkingBlock(text string, wrap int) string {
