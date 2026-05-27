@@ -129,6 +129,14 @@ type chatModel struct {
 	// cursor sits inside an @-fragment; up/down/tab/enter/esc are routed
 	// here ahead of the textarea while it's open.
 	ac pathAutocompleteModel
+
+	// selActive is true while a mouse drag-selection is in progress over the
+	// chat viewport. selAnchor / selCursor hold the drag endpoints in content
+	// coordinates; on release the spanned text is cleaned and copied to the
+	// clipboard. See chat_select.go.
+	selActive bool
+	selAnchor selPoint
+	selCursor selPoint
 }
 
 type chunkMsg struct {
@@ -259,6 +267,9 @@ func (m chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyPressMsg:
+		// Any keypress dismisses a lingering selection highlight from the
+		// last copy so it doesn't sit there while the user types or scrolls.
+		m.clearSelection()
 		// Vim hook runs before the host's own key handling so motions,
 		// operators, and the i/a/o family don't fall through to the
 		// textarea. Insert mode reports "not consumed" for everything
@@ -482,6 +493,26 @@ func (m chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 		case "pgup", "pgdown", "home", "end":
 			m.viewport, vpCmd = m.viewport.Update(msg)
 		}
+	case tea.MouseClickMsg:
+		// Left press starts a drag-selection if it lands inside the viewport.
+		// Other buttons (and presses on the input/help rows) are swallowed —
+		// nothing in this view wants a raw click.
+		if k.Button == tea.MouseLeft && m.inViewport(k.Y) {
+			m.beginSelection(k.X, k.Y)
+		}
+		return m, nil
+	case tea.MouseMotionMsg:
+		// Drag with the left button held extends the live selection.
+		if m.selActive && k.Button == tea.MouseLeft {
+			m.updateSelection(k.X, k.Y)
+		}
+		return m, nil
+	case tea.MouseReleaseMsg:
+		// Release ends the drag: copy the spanned text to the clipboard.
+		if m.selActive {
+			return m, m.finishSelection()
+		}
+		return m, nil
 	case tea.MouseMsg:
 		// Catch every flavour of mouse message — wheel, click, motion,
 		// release — so none of them slip through to the textarea's inner
@@ -1613,7 +1644,7 @@ func (m chatModel) View() string {
 	b.WriteString(indentLines(input, "  "))
 	b.WriteString("\n")
 
-	helpText := "enter send • alt+enter/ctrl+j newline • ↑↓ history • pgup/pgdn scroll • wheel scroll • ctrl+v paste • ctrl+p palette • /help • esc back"
+	helpText := "enter send • alt+enter/ctrl+j newline • ↑↓ history • pgup/pgdn scroll • drag to copy • ctrl+v paste • ctrl+p palette • /help • esc back"
 	if m.ac.active {
 		helpText = "↑↓ pick • tab/enter accept • esc dismiss"
 	}

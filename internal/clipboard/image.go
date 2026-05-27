@@ -126,6 +126,36 @@ func saveLinux() (string, error) {
 	return "", fmt.Errorf("no image on clipboard (install wl-paste or xclip)")
 }
 
+// WriteText puts s on the OS clipboard. Uses the platform's native clipboard
+// tool (pbcopy on macOS; wl-copy then xclip on Linux) by piping s to its
+// stdin. Returns an error with no side effects when no tool is available, so
+// the caller can fall back to an OSC52 escape (tea.SetClipboard).
+func WriteText(s string) error {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("pbcopy")
+	case "linux":
+		switch {
+		case lookPathOK("wl-copy"):
+			cmd = exec.Command("wl-copy")
+		case lookPathOK("xclip"):
+			cmd = exec.Command("xclip", "-selection", "clipboard")
+		default:
+			return fmt.Errorf("no clipboard tool found (install wl-copy or xclip)")
+		}
+	default:
+		return fmt.Errorf("clipboard copy not supported on %s", runtime.GOOS)
+	}
+	cmd.Stdin = strings.NewReader(s)
+	return cmd.Run()
+}
+
+func lookPathOK(name string) bool {
+	_, err := exec.LookPath(name)
+	return err == nil
+}
+
 // IsImagePath returns true if the path has an extension Claude can read as
 // an image attachment.
 func IsImagePath(p string) bool {
