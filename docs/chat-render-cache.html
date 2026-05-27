@@ -1,0 +1,492 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Why tuai got slow — and the memo that fixed it</title>
+<style>
+  :root {
+    --paper:      #f6f1e7;
+    --sheet:      #fbf7ef;
+    --ink:        #1f1a14;
+    --ink-soft:   #4a4136;
+    --muted:      #7a6f5e;
+    --rule:       #c9bda6;
+    --rule-soft:  #ddd2bb;
+    --accent:     #6b3a1f;
+    --accent-2:   #8a5a2b;
+    --mark:       #f0e4c2;
+    --ok:         #3d6b2a;
+    --no:         #8a2a2a;
+
+    --kw:         #6b3a1f;
+    --ident:      #2a4a6b;
+    --str:        #5a4a1f;
+    --comment:    #8a7f6e;
+    --num:        #6b4f1f;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0; padding: 0;
+    background:
+      repeating-linear-gradient(
+        90deg,
+        rgba(0,0,0,0.012) 0,
+        rgba(0,0,0,0.012) 1px,
+        transparent 1px,
+        transparent 3px
+      ),
+      var(--paper);
+    color: var(--ink);
+    font: 16px/1.65 "Iowan Old Style", "Palatino Linotype", "Palatino",
+                    "Charter", Georgia, "Times New Roman", serif;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  main {
+    max-width: 720px;
+    margin: 32px auto;
+    padding: 72px 56px 96px;
+    background: var(--paper);
+    box-shadow:
+      0 0 0 1px var(--rule-soft),
+      0 18px 60px -30px rgba(50, 35, 15, 0.35);
+    border: 1px solid var(--rule-soft);
+  }
+
+  h1 {
+    font-family: "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+    font-weight: 600;
+    font-size: 30px;
+    line-height: 1.2;
+    margin: 0 0 4px;
+    letter-spacing: -0.005em;
+    color: var(--ink);
+    text-align: center;
+  }
+  h1::after {
+    content: "";
+    display: block;
+    width: 60px;
+    height: 1px;
+    background: var(--accent);
+    margin: 14px auto 0;
+  }
+
+  h2 {
+    font-family: "Iowan Old Style", Georgia, serif;
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--accent);
+    margin: 40px 0 14px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid var(--rule);
+    font-variant: small-caps;
+    letter-spacing: 0.04em;
+  }
+
+  h3 {
+    font-family: "Iowan Old Style", Georgia, serif;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--accent-2);
+    margin: 22px 0 8px;
+    font-variant: small-caps;
+    letter-spacing: 0.06em;
+  }
+
+  p { margin: 0 0 14px; color: var(--ink); }
+  p + p { text-indent: 1.4em; }
+
+  .lede {
+    color: var(--ink-soft);
+    font-style: italic;
+    font-size: 17px;
+    text-align: center;
+    margin: 0 auto 40px;
+    max-width: 540px;
+    line-height: 1.55;
+  }
+
+  ul { margin: 0 0 16px; padding-left: 22px; }
+  ul li { margin-bottom: 5px; }
+  ul li::marker { color: var(--accent); }
+
+  code, pre, .mono {
+    font-family: "Iosevka", "JetBrains Mono", "SF Mono", Menlo, ui-monospace, monospace;
+    font-size: 13.5px;
+  }
+  code {
+    background: var(--mark);
+    padding: 0 4px;
+    border-radius: 2px;
+    color: var(--ink);
+    border: 1px solid rgba(107, 58, 31, 0.12);
+  }
+
+  pre {
+    background: var(--sheet);
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--accent);
+    border-radius: 0;
+    padding: 14px 18px;
+    overflow-x: auto;
+    margin: 0 0 18px;
+    box-shadow: inset 0 0 0 1px rgba(0,0,0,0.015);
+    line-height: 1.55;
+  }
+  pre code { background: transparent; padding: 0; border: 0; color: var(--ink); }
+
+  .kw   { color: var(--kw);   font-weight: 600; }
+  .id   { color: var(--ident); }
+  .str  { color: var(--str); }
+  .com  { color: var(--comment); font-style: italic; }
+  .num  { color: var(--num); }
+
+  .callout {
+    border: 1px solid var(--rule);
+    border-left: 4px solid var(--accent);
+    background: var(--sheet);
+    padding: 14px 18px;
+    margin: 14px 0 22px;
+    font-size: 15px;
+    color: var(--ink-soft);
+  }
+  .callout strong { color: var(--accent); }
+  .callout.warn { border-left-color: var(--accent-2); }
+  .callout.warn strong { color: var(--accent-2); }
+
+  table {
+    width: 100%; border-collapse: collapse; margin: 0 0 22px;
+    font-size: 14px;
+    background: var(--sheet);
+    border: 1px solid var(--rule);
+  }
+  th, td {
+    text-align: left; padding: 9px 12px;
+    border-bottom: 1px solid var(--rule-soft);
+    vertical-align: top;
+  }
+  thead tr { background: var(--mark); }
+  th {
+    color: var(--accent); font-weight: 600;
+    font-size: 12px;
+    text-transform: uppercase; letter-spacing: 0.08em;
+    font-variant: small-caps;
+    border-bottom: 1px solid var(--rule);
+  }
+  td.mono { white-space: nowrap; }
+  tbody tr:last-child td { border-bottom: 0; }
+
+  .flow { display: grid; gap: 10px; grid-template-columns: 1fr; margin: 14px 0 22px; }
+  .step {
+    background: var(--sheet);
+    border: 1px solid var(--rule);
+    padding: 12px 16px;
+    display: grid; grid-template-columns: 32px 1fr; gap: 14px;
+    align-items: baseline;
+  }
+  .step .n {
+    color: var(--paper);
+    background: var(--accent);
+    border-radius: 50%;
+    width: 26px; height: 26px;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-weight: 600; font-size: 13px;
+    font-family: "Iowan Old Style", Georgia, serif;
+  }
+  .step b { color: var(--ink); font-weight: 600; }
+  .step .why {
+    color: var(--ink-soft); display: block; margin-top: 4px;
+    font-size: 14.5px; font-style: italic;
+  }
+
+  .kvs {
+    display: grid; grid-template-columns: max-content 1fr;
+    gap: 6px 22px; margin: 0 0 22px;
+    padding: 14px 18px;
+    background: var(--sheet); border: 1px solid var(--rule);
+  }
+  .kvs dt {
+    color: var(--accent);
+    font-family: "Iowan Old Style", Georgia, serif;
+    font-variant: small-caps;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+  }
+  .kvs dd { margin: 0; color: var(--ink); }
+
+  hr {
+    border: 0;
+    text-align: center;
+    margin: 36px 0;
+    overflow: visible;
+    line-height: 0;
+  }
+  hr::before {
+    content: "✦  ✦  ✦";
+    color: var(--accent);
+    letter-spacing: 1em;
+    font-size: 13px;
+  }
+
+  .pill {
+    display: inline-block;
+    padding: 1px 9px;
+    border: 1px solid var(--rule);
+    background: var(--mark);
+    border-radius: 99px;
+    font-size: 11px;
+    font-family: "Iowan Old Style", Georgia, serif;
+    font-variant: small-caps;
+    letter-spacing: 0.06em;
+    color: var(--ink-soft);
+    margin-right: 6px;
+    vertical-align: middle;
+  }
+  .pill.ok { color: var(--ok); border-color: rgba(61,107,42,0.4); }
+  .pill.no { color: var(--no); border-color: rgba(138,42,42,0.4); }
+
+  a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+  a:hover { color: var(--accent-2); }
+  .arrow { color: var(--muted); }
+
+  /* ---- inline SVG diagram framing ---- */
+  figure {
+    margin: 14px 0 26px;
+    padding: 18px 18px 10px;
+    background: var(--sheet);
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--accent);
+  }
+  figure svg { display: block; width: 100%; height: auto; }
+  figcaption {
+    margin-top: 8px;
+    color: var(--muted);
+    font-size: 12.5px;
+    font-style: italic;
+    text-align: center;
+  }
+  .svg-label   { font: 600 13px "Iowan Old Style", Georgia, serif; fill: var(--ink); }
+  .svg-sub     { font: italic 11px "Iowan Old Style", Georgia, serif; fill: var(--muted); }
+  .svg-mono    { font: 11px "Iosevka","JetBrains Mono",ui-monospace,monospace; fill: var(--ink-soft); }
+  .svg-hot     { fill: #f3d9d2; stroke: var(--no); }
+  .svg-cool    { fill: #dceccf; stroke: var(--ok); }
+  .svg-cache   { fill: var(--mark); stroke: var(--accent); }
+  .svg-tail    { fill: #fbf7ef; stroke: var(--accent-2); }
+  .svg-flow    { stroke: var(--muted); fill: none; }
+  .svg-hotline { stroke: var(--no); }
+  .svg-coolline{ stroke: var(--ok); }
+  .badge-no    { font: 600 11px "Iowan Old Style",Georgia,serif; fill: var(--no); }
+  .badge-ok    { font: 600 11px "Iowan Old Style",Georgia,serif; fill: var(--ok); }
+
+  @media (max-width: 760px) {
+    main { padding: 36px 22px 64px; margin: 0; border: 0; box-shadow: none; }
+    body { background: var(--paper); }
+    h1 { font-size: 24px; }
+  }
+</style>
+</head>
+<body>
+<main>
+
+<h1>The Memo That Stopped tuai Lagging</h1>
+<p class="lede">A chat TUI that re-syntax-highlighted its entire history ten times a second
+— and the one cache key that taught it to stop.</p>
+
+<dl class="kvs">
+  <dt>refreshViewport</dt><dd>rebuilds the scrollback string, then re-pins it to the bottom. Called on every tick.</dd>
+  <dt>renderMessages</dt><dd>turns the whole message slice into styled text — markdown, chroma, shading.</dd>
+  <dt>the hot path</dt><dd>spinner ticks (~10/s while streaming) + every stream chunk, each calling the two above.</dd>
+  <dt>the memo</dt><dd>a cached render of the <em>persisted</em> messages, rebuilt only when its key changes.</dd>
+</dl>
+
+<h2>1 · The symptom</h2>
+<p>The complaint was plain: <em>"tuai becomes slow in longer conversation, scrolling and
+everything is slow."</em> Short chats felt instant; long ones turned to molasses. The tell-tale
+shape — cost that grows with conversation length — pointed at work being repeated over the
+<em>whole</em> history rather than just the new bytes.</p>
+
+<h2>2 · Where the time went</h2>
+<p>Every visual refresh ran through one function, <code>renderMessages()</code>, which walked
+the entire <code>session.Messages</code> slice and rebuilt each bubble from raw text:</p>
+
+<ul>
+  <li><b>chroma</b> tokenised and 24-bit-coloured every fenced code block,</li>
+  <li>regex passes restyled <code>**bold**</code> and <code>`inline code`</code>,</li>
+  <li><code>wordwrap</code> reflowed every prose line, and</li>
+  <li><code>shadeBubble</code> ran an SGR-reset regex over <em>every line</em> of output.</li>
+</ul>
+
+<p>None of that is cheap — and it ran on a slice that, for the persisted messages, is
+<em>identical</em> from one frame to the next. The trigger fired constantly:</p>
+
+<pre><code><span class="com">// spinner ticks: re-render the viewport each frame to animate the dot</span>
+<span class="kw">if</span> _, ok := msg.(spinner.TickMsg); ok {
+    <span class="kw">if</span> !m.streaming { <span class="kw">return</span> m, <span class="kw">nil</span> }
+    m.spin, spCmd = m.spin.Update(msg)
+    m.refreshViewport()        <span class="com">// ← re-renders ALL messages, ~10×/sec</span>
+    <span class="kw">return</span> m, spCmd
+}</code></pre>
+
+<p>So with <span class="num">N</span> messages in the buffer, a single streaming reply paid
+roughly <span class="num">10 × N</span> full markdown renders per second. Cost grew linearly
+with the conversation — exactly the lag the user felt.</p>
+
+<h2>3 · The fix, in one picture</h2>
+
+<figure>
+<svg viewBox="0 0 720 360" role="img" aria-label="Before and after rendering paths">
+  <!-- ===================== BEFORE ===================== -->
+  <text x="20" y="26" class="svg-label">Before <tspan class="svg-sub">— every tick rebuilds everything</tspan></text>
+
+  <!-- trigger -->
+  <rect x="20" y="44" width="118" height="40" rx="4" class="svg-hotline" fill="#fbf7ef"/>
+  <text x="79" y="62" text-anchor="middle" class="svg-mono">spinner tick</text>
+  <text x="79" y="76" text-anchor="middle" class="svg-mono">/ chunk</text>
+
+  <!-- arrow -->
+  <line x1="138" y1="64" x2="172" y2="64" class="svg-flow svg-hotline" stroke-width="1.5" marker-end="url(#ah-no)"/>
+
+  <!-- renderMessages re-renders each bubble (hot) -->
+  <rect x="172" y="34" width="360" height="92" rx="4" class="svg-hot" stroke-width="1.5"/>
+  <text x="186" y="52" class="svg-mono">renderMessages()</text>
+  <!-- the N bubbles, all hot -->
+  <rect x="186" y="60" width="68" height="24" rx="3" class="svg-hot" stroke-width="1"/>
+  <text x="220" y="76" text-anchor="middle" class="svg-mono">msg 1</text>
+  <rect x="262" y="60" width="68" height="24" rx="3" class="svg-hot" stroke-width="1"/>
+  <text x="296" y="76" text-anchor="middle" class="svg-mono">msg 2</text>
+  <text x="346" y="76" class="svg-mono">· · ·</text>
+  <rect x="372" y="60" width="68" height="24" rx="3" class="svg-hot" stroke-width="1"/>
+  <text x="406" y="76" text-anchor="middle" class="svg-mono">msg N</text>
+  <rect x="448" y="60" width="72" height="24" rx="3" class="svg-tail" stroke-width="1"/>
+  <text x="484" y="76" text-anchor="middle" class="svg-mono">live</text>
+  <text x="186" y="116" class="svg-sub">chroma + regex + wrap + shade, each frame</text>
+
+  <text x="548" y="66" class="badge-no">O(N)</text>
+  <text x="548" y="82" class="badge-no">per frame</text>
+
+  <!-- ===================== AFTER ===================== -->
+  <text x="20" y="196" class="svg-label">After <tspan class="svg-sub">— history rendered once, only the tail is live</tspan></text>
+
+  <rect x="20" y="214" width="118" height="40" rx="4" class="svg-coolline" fill="#fbf7ef"/>
+  <text x="79" y="232" text-anchor="middle" class="svg-mono">spinner tick</text>
+  <text x="79" y="246" text-anchor="middle" class="svg-mono">/ chunk</text>
+
+  <line x1="138" y1="234" x2="172" y2="234" class="svg-flow svg-coolline" stroke-width="1.5" marker-end="url(#ah-ok)"/>
+
+  <rect x="172" y="204" width="360" height="118" rx="4" class="svg-cool" stroke-width="1.5"/>
+  <text x="186" y="222" class="svg-mono">renderMessages()</text>
+
+  <!-- cached static block -->
+  <rect x="186" y="232" width="254" height="46" rx="3" class="svg-cache" stroke-width="1.5" stroke-dasharray="4 3"/>
+  <text x="313" y="250" text-anchor="middle" class="svg-mono">staticCache  (msg 1 … N)</text>
+  <text x="313" y="266" text-anchor="middle" class="svg-sub">string concat — no re-render</text>
+
+  <!-- live tail still rendered -->
+  <rect x="448" y="232" width="72" height="46" rx="3" class="svg-tail" stroke-width="1.5"/>
+  <text x="484" y="252" text-anchor="middle" class="svg-mono">live</text>
+  <text x="484" y="268" text-anchor="middle" class="svg-sub">tail</text>
+
+  <text x="186" y="304" class="svg-mono" fill="#6b3a1f">key = count | width | theme | dark</text>
+  <text x="430" y="304" class="svg-sub">rebuild only on mismatch</text>
+
+  <text x="548" y="236" class="badge-ok">O(1)</text>
+  <text x="548" y="252" class="badge-ok">per frame</text>
+
+  <defs>
+    <marker id="ah-no" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6 Z" fill="#8a2a2a"/>
+    </marker>
+    <marker id="ah-ok" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6 Z" fill="#3d6b2a"/>
+    </marker>
+  </defs>
+</svg>
+<figcaption>Red = re-highlighted every frame. Green/amber = touched once and reused.
+The live tail is the only thing that still re-renders mid-stream — and it has to.</figcaption>
+</figure>
+
+<p>Persisted messages are immutable: they change only when one is <em>appended</em> (or the
+whole buffer is cleared). So re-styling them on every tick is pure waste. The new
+<code>renderStaticMessages()</code> renders that block once and hands back a cached string
+until a small key says otherwise:</p>
+
+<pre><code><span class="kw">func</span> (m *chatModel) renderStaticMessages(wrap, bubbleInner <span class="kw">int</span>) <span class="kw">string</span> {
+    key := fmt.Sprintf(<span class="str">"%d|%d|%s|%t"</span>,
+        len(m.session.Messages), wrap, CurrentTheme().Name, isDark())
+    <span class="kw">if</span> key == m.staticKey {
+        <span class="kw">return</span> m.staticCache    <span class="com">// hot path: a map-key compare, nothing more</span>
+    }
+    <span class="com">// … rebuild every bubble exactly once, then:</span>
+    m.staticCache = b.String()
+    m.staticKey   = key
+    <span class="kw">return</span> m.staticCache
+}</code></pre>
+
+<h2>4 · Why those four fields are the whole key</h2>
+<p>The key has to capture every input that can change how an <em>immutable</em> message draws —
+and nothing else, or the cache thrashes.</p>
+
+<table>
+  <thead><tr><th>key field</th><th>changes when…</th><th>why it matters</th></tr></thead>
+  <tbody>
+    <tr><td class="mono">len(Messages)</td><td>a turn is sent / received, or <code>/clear</code></td><td>the only way the persisted set mutates</td></tr>
+    <tr><td class="mono">wrap</td><td>the terminal is resized</td><td>word-wrap width changes every line</td></tr>
+    <tr><td class="mono">theme.Name</td><td><code>/theme</code> picks a palette</td><td>chroma + bubble colours change</td></tr>
+    <tr><td class="mono">isDark()</td><td><code>/light</code> · <code>/dark</code> · <code>/auto</code></td><td>light/dark swaps the whole palette</td></tr>
+  </tbody>
+</table>
+
+<div class="callout">
+  <strong>Why count is enough:</strong> no code path ever mutates an existing entry —
+  <code>sendMessage</code>, the stream-<code>done</code> handler, and <code>persistTools</code>
+  all only <em>append</em>; <code>/clear</code> sets the slice to empty. So a changed message
+  set always shows up as a changed length.
+</div>
+
+<h2>5 · What still re-renders — on purpose</h2>
+<p>The <em>live tail</em> — the spinner line, in-flight <code>thinking</code>, streaming tool
+blocks, and the growing <code>pending</code> reply — still renders on each refresh. That's
+correct: it's the one part actually changing mid-stream, and it's a single message's worth of
+work, not the whole history.</p>
+
+<div class="flow">
+  <div class="step"><span class="n">1</span><div>
+    <b>renderMessages pulls the static block from cache.</b>
+    <span class="why">A string the model already holds — concatenated, not recomputed.</span>
+  </div></div>
+  <div class="step"><span class="n">2</span><div>
+    <b>It appends a blank separator, then renders only the live tail.</b>
+    <span class="why">Bounded by the current turn, independent of conversation length.</span>
+  </div></div>
+  <div class="step"><span class="n">3</span><div>
+    <b>On <code>done</code>, the reply is appended → count changes → key misses once.</b>
+    <span class="why">The freshly-finished message folds into the cache for all future frames.</span>
+  </div></div>
+</div>
+
+<h2>6 · The result</h2>
+<p>Streaming ticks and keystrokes went from <span class="pill no">O(N) per frame</span>
+to <span class="pill ok">O(1) per frame</span> in history length. The expensive markdown work now
+runs once per message instead of ten times a second forever. Build is clean; the UI tests pass
+unchanged, confirming the output is byte-for-byte the same — just computed far less often.</p>
+
+<div class="callout warn">
+  <strong>Next, if wanted:</strong> the live <code>pending</code> block still re-runs chroma on
+  each 50&nbsp;ms refresh as it grows. Minor next to this fix, but it's the next thing down the
+  hot path.
+</div>
+
+<hr>
+<p style="color:var(--muted);font-size:12px">
+  Source: <code>internal/ui/chat.go</code> · <code>renderStaticMessages</code>,
+  <code>renderMessages</code>. Generated 2026-05-27.
+</p>
+
+</main>
+</body>
+</html>
