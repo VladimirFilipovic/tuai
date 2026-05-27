@@ -147,12 +147,13 @@ func (c *Client) Stream(ctx context.Context, prompt, resumeID string) <-chan Chu
 		scanner := bufio.NewScanner(stdout)
 		scanner.Buffer(make([]byte, 1024*1024), 32*1024*1024)
 
+		st := &streamState{}
 		for scanner.Scan() {
 			line := scanner.Bytes()
 			if len(line) == 0 {
 				continue
 			}
-			c.dispatchLine(ctx, line, ch)
+			c.dispatchLine(ctx, line, ch, st)
 		}
 
 		// Wait for process to exit; surface stderr if non-zero.
@@ -177,8 +178,20 @@ func (c *Client) Stream(ctx context.Context, prompt, resumeID string) <-chan Chu
 	return ch
 }
 
+// streamState carries the per-Stream bookkeeping dispatchLine needs across
+// lines. An agentic turn emits several text content blocks separated by
+// tool_use blocks; without tracking we'd glue the end of one text block onto
+// the start of the next ("…flow first.Stack's up."). We remember whether any
+// text has been emitted and how many newlines it trailed with, so a new text
+// block can be prefixed with just enough newlines to make a clean paragraph
+// break.
+type streamState struct {
+	sawText    bool
+	trailingNL int
+}
+
 // dispatchLine parses a single stream-json line and forwards relevant events.
-func (c *Client) dispatchLine(ctx context.Context, line []byte, ch chan<- Chunk) {
+func (c *Client) dispatchLine(ctx context.Context, line []byte, ch chan<- Chunk, st *streamState) {
 	var ev streamLine
 	if err := json.Unmarshal(line, &ev); err != nil {
 		return
@@ -199,6 +212,8 @@ func (c *Client) dispatchLine(ctx context.Context, line []byte, ch chan<- Chunk)
 			case "text_delta":
 				if ev.Event.Delta.Text != "" {
 					send(ctx, ch, Chunk{Text: ev.Event.Delta.Text})
+					st.sawText = true
+					st.trailingNL = updateTrailingNL(st.trailingNL, ev.Event.Delta.Text)
 				}
 			case "thinking_delta":
 				if ev.Event.Delta.Thinking != "" {
@@ -210,8 +225,20 @@ func (c *Client) dispatchLine(ctx context.Context, line []byte, ch chan<- Chunk)
 				}
 			}
 		case "content_block_start":
-			if ev.Event.ContentBlock.Type == "tool_use" && ev.Event.ContentBlock.Name != "" {
-				send(ctx, ch, Chunk{ToolUse: ev.Event.ContentBlock.Name})
+			switch ev.Event.ContentBlock.Type {
+			case "tool_use":
+				if ev.Event.ContentBlock.Name != "" {
+					send(ctx, ch, Chunk{ToolUse: ev.Event.ContentBlock.Name})
+				}
+			case "text":
+				// A new text block after earlier text: inject however many
+				// newlines are still needed to reach a blank-line separator,
+				// so the two blocks read as distinct paragraphs.
+				if st.sawText && st.trailingNL < 2 {
+					sep := strings.Repeat("\n", 2-st.trailingNL)
+					send(ctx, ch, Chunk{Text: sep})
+					st.trailingNL = 2
+				}
 			}
 		}
 
@@ -223,6 +250,20 @@ func (c *Client) dispatchLine(ctx context.Context, line []byte, ch chan<- Chunk)
 			Err:   resultErr(ev),
 		})
 	}
+}
+
+// updateTrailingNL returns the count of consecutive '\n' at the end of the
+// emitted text after appending s. If s is entirely newlines the run continues
+// from cur; otherwise it restarts at s's own trailing newline run.
+func updateTrailingNL(cur int, s string) int {
+	n := 0
+	for i := len(s) - 1; i >= 0 && s[i] == '\n'; i-- {
+		n++
+	}
+	if n == len(s) {
+		return cur + n
+	}
+	return n
 }
 
 func resultErr(ev streamLine) error {
