@@ -101,6 +101,39 @@ func renderProseLine(line string, wrapWidth int) string {
 	return wordwrap.String(line, wrapWidth)
 }
 
+// highlightForFile returns syntax-highlighted code for the given filename
+// (lexer matched by extension), with no surrounding rule lines or language
+// header — callers indent as they wish. Used for tool-body code that
+// already lives inside a tool block (e.g. Write).
+func highlightForFile(code, path string) string {
+	lexer := lexers.Match(path)
+	if lexer == nil {
+		lexer = lexers.Analyse(code)
+	}
+	if lexer == nil {
+		lexer = lexers.Fallback
+	}
+	lexer = chroma.Coalesce(lexer)
+
+	style := styles.Get(CurrentTheme().Chroma())
+	if style == nil {
+		style = styles.Fallback
+	}
+	formatter := formatters.Get("terminal16m")
+	if formatter == nil {
+		formatter = formatters.Fallback
+	}
+	iter, err := lexer.Tokenise(nil, code)
+	if err != nil {
+		return code
+	}
+	var buf bytes.Buffer
+	if err := formatter.Format(&buf, style, iter); err != nil {
+		return code
+	}
+	return strings.TrimRight(buf.String(), "\n")
+}
+
 func highlightCode(code, lang string, wrapWidth int) string {
 	if lang == "" {
 		lang = "text"

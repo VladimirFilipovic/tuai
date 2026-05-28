@@ -1,3 +1,5 @@
+![tuai demo](docs/demo.gif)
+
 In my opinion much nicer UIX around ussing claude code.
 Came from hurting my eyes reading the output from claude code. I wanted something that cleanly separates my input from its output.
 
@@ -12,3 +14,13 @@ Supports:
 - Changing models
 - Theme selection
 - Animations around agents actions
+
+## Demo
+
+The gif above is generated from `docs/demo.tape` with [VHS](https://github.com/charmbracelet/vhs):
+
+```sh
+brew install vhs
+make build
+vhs docs/demo.tape   # writes docs/demo.gif
+```

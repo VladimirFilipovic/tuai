@@ -1237,9 +1237,9 @@ func renderWriteInput(f map[string]any, wrap int) string {
 	if content == "" {
 		return strings.TrimRight(b.String(), "\n")
 	}
-	dim := lipgloss.NewStyle().Foreground(CurrentTheme().Dim())
-	for _, ln := range strings.Split(content, "\n") {
-		b.WriteString(dim.Render("    "+truncateLine(ln, wrap)) + "\n")
+	highlighted := highlightForFile(content, path)
+	for _, ln := range strings.Split(highlighted, "\n") {
+		b.WriteString("    " + ln + "\n")
 	}
 	return strings.TrimRight(b.String(), "\n")
 }
