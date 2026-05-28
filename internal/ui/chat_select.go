@@ -102,43 +102,95 @@ func selStyle() lipgloss.Style {
 }
 
 func (m *chatModel) beginSelection(x, y int) {
-	m.viewport.ClearHighlights()
-	// Bubbles' viewport applies BOTH HighlightStyle and SelectedHighlightStyle
-	// to every highlight (hiIdx defaults to 0, which is a valid index, so the
-	// second pass always fires). If we only set HighlightStyle, the second
-	// StyleRanges call wraps the same range in the *empty* SelectedHighlight
-	// style — which, via lipgloss boundary-continuity SGRs, ends up emitting
-	// our open/close codes around zero-width regions and leaves the actual
-	// highlighted text unstyled. Setting both to the same style sidesteps the
-	// quirk and makes the yellow marker actually paint.
-	style := selStyle()
-	m.viewport.HighlightStyle = style
-	m.viewport.SelectedHighlightStyle = style
 	m.selActive = true
 	p := m.pointAt(x, y)
 	m.selAnchor = p
 	m.selCursor = p
+	m.paintSelection()
 }
 
 func (m *chatModel) updateSelection(x, y int) {
 	m.selCursor = m.pointAt(x, y)
-	lo, hi := m.selectionRange()
-	if hi <= lo {
-		m.viewport.ClearHighlights()
+	m.paintSelection()
+}
+
+// paintSelection re-renders the viewport's content with the active selection
+// painted in by selStyle() — bypassing bubbles' SetHighlights, whose
+// parseMatches walks the ansi-stripped graphemes but checks
+// `content[bytePos] == '\n'` against the *raw* SGR-laden content. With each
+// bubble line wrapped in lipgloss SGR pairs, that check never finds a
+// newline and the entire highlight collapses onto line 0. Painting the
+// styled ranges into the content ourselves sidesteps the issue and keeps
+// us in cell-coordinate land where lipgloss.StyleRanges is reliable.
+func (m *chatModel) paintSelection() {
+	// Re-render from session when we have one (the live UI path); fall back
+	// to the current viewport content otherwise (test fixtures pre-load
+	// content directly into the viewport and don't carry a session).
+	var base string
+	if m.session != nil {
+		base = m.renderMessages()
+	} else {
+		base = m.viewport.GetContent()
+	}
+	lo, hi := m.normalizedSelection()
+	if lo == hi {
+		m.viewport.SetContent(base)
 		return
 	}
-	m.viewport.SetHighlights([][]int{{lo, hi}})
+	m.viewport.SetContent(applySelectionStyle(base, lo, hi, selStyle()))
+}
+
+// applySelectionStyle overlays `style` on the [lo, hi] cell range of `content`,
+// where lo and hi are selPoints in (line, col) form. Cross-line selections
+// paint lo.col → EOL on the first line, the full width of each line in
+// between, and BOL → hi.col on the last line — matching what a terminal
+// click-and-drag visually selects.
+func applySelectionStyle(content string, lo, hi selPoint, style lipgloss.Style) string {
+	lines := strings.Split(content, "\n")
+	if lo.line >= len(lines) {
+		return content
+	}
+	if hi.line >= len(lines) {
+		hi.line = len(lines) - 1
+		hi.col = lipgloss.Width(lines[hi.line])
+	}
+	for i := lo.line; i <= hi.line; i++ {
+		start := 0
+		end := lipgloss.Width(lines[i])
+		if i == lo.line {
+			start = lo.col
+		}
+		if i == hi.line {
+			end = hi.col
+		}
+		if end <= start {
+			continue
+		}
+		lines[i] = lipgloss.StyleRanges(lines[i], lipgloss.NewRange(start, end, style))
+	}
+	return strings.Join(lines, "\n")
+}
+
+// normalizedSelection returns (anchor, cursor) ordered so that lo precedes hi
+// in reading order. Selection direction (down-right vs up-left) shouldn't
+// affect which cells get painted.
+func (m *chatModel) normalizedSelection() (lo, hi selPoint) {
+	a, b := m.selAnchor, m.selCursor
+	if a.line > b.line || (a.line == b.line && a.col > b.col) {
+		return b, a
+	}
+	return a, b
 }
 
 // finishSelection copies the highlighted text (with bubble frames stripped) to
-// the clipboard and returns a tea.Cmd. The highlight is re-applied after the
-// notice repaint (SetContent clears it) so it lingers as confirmation until
-// the next key press or new selection.
+// the clipboard and returns a tea.Cmd. The selection style stays painted
+// after release so the user sees exactly what was copied until the next key
+// press or a fresh drag clears it.
 func (m *chatModel) finishSelection() tea.Cmd {
 	m.selActive = false
 	lo, hi := m.selectionRange()
 	if hi <= lo {
-		m.viewport.ClearHighlights()
+		m.clearSelection()
 		return nil
 	}
 	stripped := ansi.Strip(m.viewport.GetContent())
@@ -147,7 +199,7 @@ func (m *chatModel) finishSelection() tea.Cmd {
 	}
 	text := cleanSelection(stripped[lo:hi])
 	if text == "" {
-		m.viewport.ClearHighlights()
+		m.clearSelection()
 		return nil
 	}
 	n := len([]rune(text))
@@ -155,11 +207,10 @@ func (m *chatModel) finishSelection() tea.Cmd {
 	m.copyToastFrame = 0
 	m.copyToastID++
 	toastID := m.copyToastID
-	m.refreshViewport()
-	// refreshViewport's SetContent wiped the highlight; restore it so the user
-	// sees exactly what was copied. The toast lives in the header, so the
-	// message-region offsets we just computed are still valid.
-	m.viewport.SetHighlights([][]int{{lo, hi}})
+	// Repaint with the selection still highlighted — same overlay path
+	// updateSelection uses, so the user sees exactly what was copied until
+	// the next key press or new selection clears it.
+	m.paintSelection()
 	tickCmd := tea.Tick(copyToastPopDuration, func(time.Time) tea.Msg {
 		return copyToastTickMsg{id: toastID}
 	})
@@ -174,7 +225,9 @@ func (m *chatModel) finishSelection() tea.Cmd {
 // clearSelection drops any visible highlight and resets in-progress state.
 func (m *chatModel) clearSelection() {
 	m.selActive = false
-	m.viewport.ClearHighlights()
+	m.selAnchor = selPoint{}
+	m.selCursor = selPoint{}
+	m.refreshViewport()
 }
 
 // selectionRange returns the [lo, hi) byte offsets of the current selection in

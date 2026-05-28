@@ -6,7 +6,20 @@ import (
 
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
+	lipgloss "charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 )
+
+// cellIndexOf returns the cell-column of `text` within `line` (-1 if absent).
+// applySelectionStyle works in lipgloss cell coordinates, which differ from
+// byte offsets whenever the line contains multi-byte runes like '┃'.
+func cellIndexOf(line, text string) int {
+	at := strings.Index(line, text)
+	if at < 0 {
+		return -1
+	}
+	return lipgloss.Width(line[:at])
+}
 
 func TestStripBubbleFrame(t *testing.T) {
 	cases := []struct {
@@ -148,6 +161,89 @@ func TestMousePressDragSetsSelection(t *testing.T) {
 	m, _ = m.Update(drag)
 	if m.selCursor != (selPoint{line: 1, col: 9}) {
 		t.Fatalf("cursor = %+v, want {1,9}", m.selCursor)
+	}
+}
+
+// TestApplySelectionStyleSingleLine paints a yellow highlight onto a single
+// styled bubble line and checks the SGR immediately preceding the target
+// text is our yellow-marker style — not the bubble's grey bg.
+func TestApplySelectionStyleSingleLine(t *testing.T) {
+	rebuildStyles()
+	bubble := s.UserBubble.Render("fdfdfdfd")
+	stripped := ansi.Strip(bubble)
+	col := cellIndexOf(stripped, "fdfdfdfd")
+	if col < 0 {
+		t.Fatalf("test setup: 'fdfdfdfd' not in stripped %q", stripped)
+	}
+
+	out := applySelectionStyle(bubble, selPoint{0, col}, selPoint{0, col + 8}, selStyle())
+	assertWrappedByYellow(t, out, "fdfdfdfd")
+}
+
+// TestApplySelectionStyleAcrossMessages mirrors the screenshot bug: a user
+// bubble ("fdfdfdfd") followed by an assistant bubble, each line wrapped in
+// its own lipgloss SGR pair. The selection must land on the user text on
+// line 1, not be misrouted to the chip row on line 0 by bubbles' broken
+// parseMatches.
+func TestApplySelectionStyleAcrossMessages(t *testing.T) {
+	rebuildStyles()
+	userChip := "  " + s.UserLabel.Render("You") + s.SessionMeta.Render("  12:50")
+	userBubble := s.UserBubble.Render("fdfdfdfd")
+	asstChip := "  " + s.AssistantLabel.Render("Claude") + s.SessionMeta.Render("  12:50")
+	asstBubble := s.AssistantBubble.Render("Unclear input — did you mean to send something specific?")
+
+	content := strings.Join([]string{userChip, userBubble, "", asstChip, asstBubble}, "\n")
+
+	stripLines := strings.Split(ansi.Strip(content), "\n")
+	var fdLine, fdCol int
+	for i, ln := range stripLines {
+		if c := cellIndexOf(ln, "fdfdfdfd"); c >= 0 {
+			fdLine, fdCol = i, c
+			break
+		}
+	}
+	out := applySelectionStyle(content,
+		selPoint{fdLine, fdCol}, selPoint{fdLine, fdCol + 8}, selStyle())
+
+	assertWrappedByYellow(t, out, "fdfdfdfd")
+}
+
+// TestApplySelectionStyleMultiLine: drag spans two lines — should paint
+// lo.col → EOL on line 0, BOL → hi.col on line 1.
+func TestApplySelectionStyleMultiLine(t *testing.T) {
+	rebuildStyles()
+	l0 := s.UserBubble.Render("alpha")
+	l1 := s.UserBubble.Render("bravo")
+	content := l0 + "\n" + l1
+
+	// Locate "lpha" and "br" in the stripped lines (cell coords).
+	strip := strings.Split(ansi.Strip(content), "\n")
+	startCol := cellIndexOf(strip[0], "lpha")
+	endCol := cellIndexOf(strip[1], "br") + 2
+	out := applySelectionStyle(content,
+		selPoint{0, startCol}, selPoint{1, endCol}, selStyle())
+
+	assertWrappedByYellow(t, out, "lpha")
+	assertWrappedByYellow(t, out, "br")
+}
+
+// assertWrappedByYellow checks that `text` appears in `out` immediately
+// preceded by an SGR sequence containing our yellow-marker bg (48;2;255;214;10).
+func assertWrappedByYellow(t *testing.T, out, text string) {
+	t.Helper()
+	at := strings.Index(out, text)
+	if at < 0 {
+		t.Fatalf("%q not present in rendered output:\n%q", text, out)
+	}
+	prefix := out[:at]
+	lastEsc := strings.LastIndex(prefix, "\x1b[")
+	if lastEsc < 0 {
+		t.Fatalf("no SGR precedes %q in %q", text, out)
+	}
+	openSGR := prefix[lastEsc:]
+	if !strings.Contains(openSGR, "48;2;255;214;10") {
+		t.Errorf("expected %q wrapped by yellow-marker SGR; preceding SGR was %q",
+			text, openSGR)
 	}
 }
 

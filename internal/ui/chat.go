@@ -924,10 +924,22 @@ func (m *chatModel) persistTools() {
 
 func (m *chatModel) refreshViewport() {
 	wasAtBottom := m.atBottom
-	m.viewport.SetContent(m.renderMessages())
+	content := m.renderMessages()
+	if m.hasSelection() {
+		lo, hi := m.normalizedSelection()
+		content = applySelectionStyle(content, lo, hi, selStyle())
+	}
+	m.viewport.SetContent(content)
 	if wasAtBottom {
 		m.viewport.GotoBottom()
 	}
+}
+
+// hasSelection reports whether anchor and cursor span a non-empty range —
+// used by refreshViewport so a stream chunk arriving mid-drag (or right
+// after finishSelection) doesn't wipe the highlight via SetContent.
+func (m *chatModel) hasSelection() bool {
+	return m.selAnchor != m.selCursor
 }
 
 // viewportBottomPad keeps the last bubble's left bar off the input bar.
