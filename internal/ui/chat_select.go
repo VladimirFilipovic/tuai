@@ -103,7 +103,17 @@ func selStyle() lipgloss.Style {
 
 func (m *chatModel) beginSelection(x, y int) {
 	m.viewport.ClearHighlights()
-	m.viewport.HighlightStyle = selStyle()
+	// Bubbles' viewport applies BOTH HighlightStyle and SelectedHighlightStyle
+	// to every highlight (hiIdx defaults to 0, which is a valid index, so the
+	// second pass always fires). If we only set HighlightStyle, the second
+	// StyleRanges call wraps the same range in the *empty* SelectedHighlight
+	// style — which, via lipgloss boundary-continuity SGRs, ends up emitting
+	// our open/close codes around zero-width regions and leaves the actual
+	// highlighted text unstyled. Setting both to the same style sidesteps the
+	// quirk and makes the yellow marker actually paint.
+	style := selStyle()
+	m.viewport.HighlightStyle = style
+	m.viewport.SelectedHighlightStyle = style
 	m.selActive = true
 	p := m.pointAt(x, y)
 	m.selAnchor = p
