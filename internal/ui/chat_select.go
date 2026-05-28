@@ -88,14 +88,16 @@ func renderCopyToast(frame, chars int) string {
 	}
 }
 
-// selStyle is the highlight applied to the live selection. Black text on the
-// theme accent, bolded — that combo punches through colorized spans (code
-// blocks, links) where SetHighlights overlays don't fully replace inner
-// styling, which had left the highlight looking washed-out in dark themes.
+// selStyle is the highlight applied to the live selection. Hard-coded
+// highlighter-marker yellow on black, bold — picked over the theme accent
+// because many of our pastel-ish dark-mode accents (#8aa6e0, #8ab09a, …)
+// rendered as a washed-out tint that the user couldn't pick out from the
+// surrounding bubble shading. Yellow-on-black reads at a glance against any
+// theme or terminal palette, mirroring the physical highlighter idiom.
 func selStyle() lipgloss.Style {
 	return lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#0a0a0c")).
-		Background(CurrentTheme().Accent()).
+		Background(lipgloss.Color("#ffd60a")).
 		Bold(true)
 }
 
