@@ -2,20 +2,42 @@ package ui
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"time"
+	"unicode"
 
+	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"github.com/VladimirFilipovic/tuai/internal/storage"
 )
 
 type sessionsModel struct {
 	sessions []*storage.Session
+	// filtered indexes into sessions after applying the project filter and
+	// fuzzy-match on filter text. cursor is an index into filtered.
+	filtered []int
 	cursor   int
 	store    *storage.Store
 	width    int
 	height   int
 	err      error
+
+	// filter is the search box. filterActive routes key events to it; when
+	// inactive the user navigates the list normally.
+	filter       textinput.Model
+	filterActive bool
+
+	// projectFilter is "" (all), or a project path. "." is a sentinel for
+	// "current working directory" — resolved against os.Getwd() at filter
+	// time so the user can toggle to "only this project" with one keypress.
+	projectFilter string
+
+	// cwd is captured once at model creation. Used as the default project
+	// filter target.
+	cwd string
 }
 
 type sessionsLoadedMsg struct {
@@ -28,7 +50,16 @@ type newSessionMsg struct{}
 type deleteSessionMsg struct{ id string }
 
 func newSessionsModel(store *storage.Store) sessionsModel {
-	return sessionsModel{store: store}
+	ti := textinput.New()
+	ti.Placeholder = "fuzzy search…"
+	ti.Prompt = ""
+	ti.SetWidth(40)
+	cwd, _ := os.Getwd()
+	return sessionsModel{
+		store:  store,
+		filter: ti,
+		cwd:    cwd,
+	}
 }
 
 func loadSessions(store *storage.Store) tea.Cmd {
@@ -47,14 +78,54 @@ func (m sessionsModel) Update(msg tea.Msg) (sessionsModel, tea.Cmd) {
 	case sessionsLoadedMsg:
 		m.err = msg.err
 		m.sessions = msg.sessions
-		if m.cursor >= len(m.sessions) {
-			m.cursor = max(0, len(m.sessions)-1)
-		}
+		m.recomputeFiltered()
 
 	case tea.KeyPressMsg:
+		// While the filter input is focused, route most keys to it. Only
+		// a few control keys (enter, esc, tab, up/down) keep their list
+		// semantics so the user can navigate without leaving the field.
+		if m.filterActive {
+			switch msg.String() {
+			case "esc":
+				m.filterActive = false
+				m.filter.Blur()
+				return m, nil
+			case "enter":
+				if len(m.filtered) > 0 {
+					sess := m.sessions[m.filtered[m.cursor]]
+					return m, func() tea.Msg { return openSessionMsg{session: sess} }
+				}
+				return m, nil
+			case "tab":
+				m.cycleProjectFilter()
+				m.recomputeFiltered()
+				return m, nil
+			case "down", "ctrl+n":
+				if m.cursor < len(m.filtered)-1 {
+					m.cursor++
+				}
+				return m, nil
+			case "up", "ctrl+p":
+				if m.cursor > 0 {
+					m.cursor--
+				}
+				return m, nil
+			}
+			var cmd tea.Cmd
+			m.filter, cmd = m.filter.Update(msg)
+			m.recomputeFiltered()
+			return m, cmd
+		}
+
 		switch msg.String() {
+		case "/":
+			m.filterActive = true
+			return m, m.filter.Focus()
+		case "tab":
+			m.cycleProjectFilter()
+			m.recomputeFiltered()
 		case "j", "down":
-			if m.cursor < len(m.sessions)-1 {
+			if m.cursor < len(m.filtered)-1 {
 				m.cursor++
 			}
 		case "k", "up":
@@ -64,27 +135,34 @@ func (m sessionsModel) Update(msg tea.Msg) (sessionsModel, tea.Cmd) {
 		case "g", "home":
 			m.cursor = 0
 		case "G", "end":
-			m.cursor = max(0, len(m.sessions)-1)
+			m.cursor = max(0, len(m.filtered)-1)
 		case "enter":
-			if len(m.sessions) > 0 {
-				sess := m.sessions[m.cursor]
+			if len(m.filtered) > 0 {
+				sess := m.sessions[m.filtered[m.cursor]]
 				return m, func() tea.Msg { return openSessionMsg{session: sess} }
 			}
 		case "n":
 			return m, func() tea.Msg { return newSessionMsg{} }
 		case "d", "x":
-			if len(m.sessions) > 0 {
-				id := m.sessions[m.cursor].ID
+			if len(m.filtered) > 0 {
+				id := m.sessions[m.filtered[m.cursor]].ID
 				return m, func() tea.Msg { return deleteSessionMsg{id: id} }
 			}
 		case "r":
 			return m, loadSessions(m.store)
 		case "e":
-			if len(m.sessions) > 0 {
-				sess := m.sessions[m.cursor]
+			if len(m.filtered) > 0 {
+				sess := m.sessions[m.filtered[m.cursor]]
 				id := sess.ID
 				name := sess.Name
 				return m, func() tea.Msg { return openRenameMsg{sessionID: id, current: name} }
+			}
+		case "esc":
+			// Clear an active filter when the user backs out of the list.
+			if m.filter.Value() != "" || m.projectFilter != "" {
+				m.filter.Reset()
+				m.projectFilter = ""
+				m.recomputeFiltered()
 			}
 		}
 	}
@@ -101,6 +179,22 @@ func (m sessionsModel) View() string {
 	title := s.TitleBar.Render("  claude")
 	subtitle := s.Subtle.Render(" sessions")
 	b.WriteString(title + subtitle + "\n")
+	b.WriteString(divider(m.width) + "\n")
+
+	// Filter bar: project chip + search field. Always visible so the
+	// keybindings (/, tab) are discoverable.
+	chipLabel := "project: all"
+	if m.projectFilter != "" {
+		chipLabel = "project: " + shortenProject(m.resolvedProjectFilter())
+	}
+	chip := s.HeaderChip.Render(chipLabel)
+
+	searchPrefix := s.Subtle.Render("  /")
+	searchField := m.filter.View()
+	if !m.filterActive && m.filter.Value() == "" {
+		searchField = s.Subtle.Render("search (press /)")
+	}
+	b.WriteString(" " + chip + searchPrefix + " " + searchField + "\n")
 	b.WriteString(divider(m.width) + "\n\n")
 
 	if m.err != nil {
@@ -110,20 +204,23 @@ func (m sessionsModel) View() string {
 	if len(m.sessions) == 0 {
 		empty := s.Subtle.Render("  No sessions yet. Press n to start a new one.")
 		b.WriteString(empty + "\n")
+	} else if len(m.filtered) == 0 {
+		empty := s.Subtle.Render("  No sessions match.")
+		b.WriteString(empty + "\n")
 	} else {
-		maxVisible := m.height - 8
-		if maxVisible < 1 {
-			maxVisible = 1
-		}
+		maxVisible := max(m.height-10, 1)
 		start := 0
 		if m.cursor >= maxVisible {
 			start = m.cursor - maxVisible + 1
 		}
 
-		for i := start; i < len(m.sessions) && i < start+maxVisible; i++ {
-			sess := m.sessions[i]
+		for i := start; i < len(m.filtered) && i < start+maxVisible; i++ {
+			sess := m.sessions[m.filtered[i]]
 			name := sess.Name
-			meta := fmt.Sprintf("%s  %d msgs", relTime(sess.UpdatedAt), len(sess.Messages))
+			meta := fmt.Sprintf("%s  %s  %d msgs",
+				shortenProject(sess.Project),
+				relTime(sess.UpdatedAt),
+				len(sess.Messages))
 
 			nameWidth := m.width - len(meta) - 8
 			if nameWidth > 0 && len(name) > nameWidth {
@@ -148,8 +245,13 @@ func (m sessionsModel) View() string {
 	}
 
 	b.WriteString("\n" + divider(m.width) + "\n")
-	help := s.Help.Render("enter open • n new • e rename • d delete • r refresh • ctrl+p palette • g/G top/bottom • q quit")
-	b.WriteString(help)
+	var help string
+	if m.filterActive {
+		help = "type to filter • tab project • ↑/↓ move • enter open • esc done"
+	} else {
+		help = "/ search • tab project • enter open • n new • e rename • d delete • r refresh • ctrl+p palette • q quit"
+	}
+	b.WriteString(s.Help.Render(help))
 
 	return b.String()
 }
@@ -157,6 +259,168 @@ func (m sessionsModel) View() string {
 func (m *sessionsModel) setSize(w, h int) {
 	m.width = w
 	m.height = h
+	m.filter.SetWidth(max(w-20, 10))
+}
+
+// recomputeFiltered rebuilds the filtered index slice based on the current
+// project filter and fuzzy search text. Cursor is clamped to the new bounds.
+func (m *sessionsModel) recomputeFiltered() {
+	needle := strings.TrimSpace(m.filter.Value())
+	target := m.resolvedProjectFilter()
+
+	type scored struct {
+		idx   int
+		score int
+	}
+	var matched []scored
+	for i, sess := range m.sessions {
+		if target != "" && sess.Project != target {
+			continue
+		}
+		score, ok := fuzzyScore(sess.Name, needle)
+		if !ok {
+			continue
+		}
+		matched = append(matched, scored{idx: i, score: score})
+	}
+
+	// With a search needle, rank by score (higher = better). Without one
+	// keep the store's recency order.
+	if needle != "" {
+		sort.SliceStable(matched, func(i, j int) bool {
+			return matched[i].score > matched[j].score
+		})
+	}
+
+	m.filtered = m.filtered[:0]
+	for _, x := range matched {
+		m.filtered = append(m.filtered, x.idx)
+	}
+	if m.cursor >= len(m.filtered) {
+		m.cursor = max(0, len(m.filtered)-1)
+	}
+}
+
+// resolvedProjectFilter expands the "." sentinel to the captured cwd so a
+// freshly-launched tui filters to "this project" by tab-toggle.
+func (m sessionsModel) resolvedProjectFilter() string {
+	if m.projectFilter == "." {
+		return m.cwd
+	}
+	return m.projectFilter
+}
+
+// cycleProjectFilter walks "" → cwd → each other project seen in sessions → "".
+func (m *sessionsModel) cycleProjectFilter() {
+	projects := m.uniqueProjects()
+	if len(projects) == 0 {
+		return
+	}
+
+	current := m.resolvedProjectFilter()
+	// Find current position in the ordered list. "" is index -1.
+	pos := -1
+	for i, p := range projects {
+		if p == current {
+			pos = i
+			break
+		}
+	}
+	next := pos + 1
+	if next >= len(projects) {
+		m.projectFilter = ""
+		return
+	}
+	if projects[next] == m.cwd {
+		m.projectFilter = "."
+	} else {
+		m.projectFilter = projects[next]
+	}
+}
+
+// uniqueProjects returns each non-empty project path that appears in the
+// loaded sessions, with cwd pushed to the front when present. Stable order
+// (by recent-first via sessions list, then alphabetical for the rest).
+func (m sessionsModel) uniqueProjects() []string {
+	seen := map[string]bool{}
+	var rest []string
+	hasCwd := false
+	for _, sess := range m.sessions {
+		if sess.Project == "" || seen[sess.Project] {
+			continue
+		}
+		seen[sess.Project] = true
+		if sess.Project == m.cwd {
+			hasCwd = true
+			continue
+		}
+		rest = append(rest, sess.Project)
+	}
+	sort.Strings(rest)
+	if hasCwd {
+		return append([]string{m.cwd}, rest...)
+	}
+	return rest
+}
+
+// shortenProject renders a project path as just the trailing directory name,
+// since the full path is usually long and only the project name carries info.
+func shortenProject(p string) string {
+	if p == "" {
+		return "—"
+	}
+	return filepath.Base(p)
+}
+
+// fuzzyScore returns (score, true) if every rune of needle appears in haystack
+// in order (case-insensitive). The score rewards contiguous runs and matches
+// at word boundaries so "fb" beats "f...b" inside "foo-bar".
+func fuzzyScore(haystack, needle string) (int, bool) {
+	if needle == "" {
+		return 0, true
+	}
+	hs := []rune(strings.ToLower(haystack))
+	ns := []rune(strings.ToLower(needle))
+
+	score := 0
+	prevMatch := -2
+	hi := 0
+	for _, nr := range ns {
+		found := -1
+		for ; hi < len(hs); hi++ {
+			if hs[hi] == nr {
+				found = hi
+				break
+			}
+		}
+		if found == -1 {
+			return 0, false
+		}
+		// Bonuses: adjacent to previous match, or at a word boundary.
+		if found == prevMatch+1 {
+			score += 5
+		} else {
+			score += 1
+		}
+		if found == 0 || isBoundary(hs, found) {
+			score += 3
+		}
+		prevMatch = found
+		hi++
+	}
+	// Slight bonus for shorter haystacks (better signal/noise).
+	if len(hs) < 20 {
+		score += 20 - len(hs)
+	}
+	return score, true
+}
+
+func isBoundary(rs []rune, i int) bool {
+	if i <= 0 {
+		return true
+	}
+	prev := rs[i-1]
+	return !unicode.IsLetter(prev) && !unicode.IsDigit(prev)
 }
 
 func relTime(t time.Time) string {

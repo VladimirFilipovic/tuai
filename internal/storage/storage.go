@@ -36,6 +36,10 @@ type Session struct {
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 
+	// Project is the working directory where the session was created.
+	// Used to filter the sessions list to the current project.
+	Project string `json:"project,omitempty"`
+
 	// ResumeID is the Claude Code session ID returned from the first
 	// `claude -p` invocation. Subsequent turns pass it via --resume so
 	// Claude continues the same on-disk conversation.
@@ -63,12 +67,16 @@ func (s *Store) New(name string) *Session {
 		name = "Session " + time.Now().Format("Jan 2 15:04")
 	}
 	now := time.Now()
+	// Tag the session with the current working directory so the sessions
+	// list can filter by project. Best-effort: empty on error.
+	project, _ := os.Getwd()
 	return &Session{
 		ID:        uuid.New().String(),
 		Name:      name,
 		Messages:  []Message{},
 		CreatedAt: now,
 		UpdatedAt: now,
+		Project:   project,
 	}
 }
 
