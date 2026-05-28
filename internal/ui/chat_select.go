@@ -3,12 +3,22 @@ package ui
 import (
 	"strconv"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	lipgloss "charm.land/lipgloss/v2"
 	"github.com/VladimirFilipovic/tuai/internal/clipboard"
 	"github.com/charmbracelet/x/ansi"
 )
+
+// copyToastDuration is how long the "copied N chars" popup lingers in the
+// top-right corner after a drag-selection is released.
+const copyToastDuration = 2200 * time.Millisecond
+
+// clearCopyToastMsg is fired by a tea.Tick after a copy toast is shown. The
+// id guards against a newer copy clearing an older toast: each finishSelection
+// bumps copyToastID, and a stale tick is dropped when the ids don't match.
+type clearCopyToastMsg struct{ id int }
 
 // chatHeaderRows is how many screen rows sit above the chat viewport: the
 // header line and the divider beneath it (see chatModel.View). Mouse Y
@@ -37,11 +47,15 @@ func (m *chatModel) inViewport(y int) bool {
 	return y >= chatHeaderRows && y < chatHeaderRows+m.viewport.Height()
 }
 
-// selStyle is the highlight applied to the live selection. Reverse video reads
-// as "selected" against any theme without having to pick a colour that fights
-// the bubble shading.
+// selStyle is the highlight applied to the live selection. Black text on the
+// theme accent, bolded — that combo punches through colorized spans (code
+// blocks, links) where SetHighlights overlays don't fully replace inner
+// styling, which had left the highlight looking washed-out in dark themes.
 func selStyle() lipgloss.Style {
-	return lipgloss.NewStyle().Foreground(subtleBg()).Background(CurrentTheme().Accent())
+	return lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#0a0a0c")).
+		Background(CurrentTheme().Accent()).
+		Bold(true)
 }
 
 func (m *chatModel) beginSelection(x, y int) {
@@ -84,18 +98,23 @@ func (m *chatModel) finishSelection() tea.Cmd {
 		return nil
 	}
 	n := len([]rune(text))
-	m.notice = "copied " + plural(n, "char") + " to clipboard"
+	m.copyToast = "copied " + plural(n, "char")
+	m.copyToastID++
+	toastID := m.copyToastID
 	m.refreshViewport()
 	// refreshViewport's SetContent wiped the highlight; restore it so the user
-	// sees exactly what was copied. The notice is appended below the messages,
-	// so the message-region offsets we just computed are still valid.
+	// sees exactly what was copied. The toast lives in the header, so the
+	// message-region offsets we just computed are still valid.
 	m.viewport.SetHighlights([][]int{{lo, hi}})
+	clearCmd := tea.Tick(copyToastDuration, func(time.Time) tea.Msg {
+		return clearCopyToastMsg{id: toastID}
+	})
 	if err := clipboard.WriteText(text); err != nil {
 		// OSC52 fallback for terminals where no native clipboard tool is
-		// reachable (e.g. over SSH). Best-effort; the notice already reported.
-		return tea.SetClipboard(text)
+		// reachable (e.g. over SSH). Best-effort; the toast already reported.
+		return tea.Batch(clearCmd, tea.SetClipboard(text))
 	}
-	return nil
+	return clearCmd
 }
 
 // clearSelection drops any visible highlight and resets in-progress state.

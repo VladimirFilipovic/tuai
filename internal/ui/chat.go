@@ -137,6 +137,12 @@ type chatModel struct {
 	selActive bool
 	selAnchor selPoint
 	selCursor selPoint
+
+	// copyToast is the "copied N chars" popup shown in the header's right
+	// corner after a drag-selection is released. copyToastID lets a fresh
+	// copy invalidate the previous one's pending clear-tick.
+	copyToast   string
+	copyToastID int
 }
 
 type chunkMsg struct {
@@ -263,6 +269,15 @@ func (m chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 			m.resetHistoryNav()
 			_ = m.store.Save(m.session)
 			m.refreshViewport()
+		}
+		return m, nil
+
+	case clearCopyToastMsg:
+		// Only clear if this tick matches the most recent copy. A newer copy
+		// would have bumped copyToastID, and we don't want its toast cut short
+		// by an older tick firing.
+		if msg.id == m.copyToastID {
+			m.copyToast = ""
 		}
 		return m, nil
 
@@ -1631,7 +1646,24 @@ func (m chatModel) View() string {
 		stat = s.Subtle.Render(fmt.Sprintf("  · $%.4f · %.1fs", m.lastCost, float64(m.lastDur)/1000))
 	}
 	header := " " + chip + name + "  " + modelChip + meta + stat
-	b.WriteString(lipgloss.NewStyle().MaxWidth(m.width).Render(header) + "\n")
+	headerLine := lipgloss.NewStyle().MaxWidth(m.width).Render(header)
+	if m.copyToast != "" {
+		// Right-align a punchy toast onto the header row. Theme accent bg
+		// + bold + a ✓ glyph makes it read at a glance without stealing a
+		// row of its own.
+		toast := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#0a0a0c")).
+			Background(CurrentTheme().Accent()).
+			Bold(true).
+			Padding(0, 1).
+			Render("✓ " + m.copyToast)
+		hw := lipgloss.Width(headerLine)
+		tw := lipgloss.Width(toast)
+		if hw+tw+1 <= m.width {
+			headerLine += strings.Repeat(" ", m.width-hw-tw) + toast
+		}
+	}
+	b.WriteString(headerLine + "\n")
 	b.WriteString(divider(m.width) + "\n")
 
 	b.WriteString(m.viewport.View())
