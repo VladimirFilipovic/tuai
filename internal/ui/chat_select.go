@@ -11,14 +11,19 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// copyToastDuration is how long the "copied N chars" popup lingers in the
-// top-right corner after a drag-selection is released.
-const copyToastDuration = 2200 * time.Millisecond
+// Copy-toast animation frame durations. The toast has three phases — a
+// snappy pop entrance, a long readable hold, and a brief fade-out — that
+// together feel like a small "confirm" gesture without parking on screen.
+const (
+	copyToastPopDuration  = 130 * time.Millisecond
+	copyToastHoldDuration = 1750 * time.Millisecond
+	copyToastFadeDuration = 320 * time.Millisecond
+)
 
-// clearCopyToastMsg is fired by a tea.Tick after a copy toast is shown. The
-// id guards against a newer copy clearing an older toast: each finishSelection
-// bumps copyToastID, and a stale tick is dropped when the ids don't match.
-type clearCopyToastMsg struct{ id int }
+// copyToastTickMsg fires the next animation frame. id guards against ticks
+// from older toasts firing on a newer one: each finishSelection bumps
+// copyToastID, and a stale tick is dropped when the ids don't match.
+type copyToastTickMsg struct{ id int }
 
 // chatHeaderRows is how many screen rows sit above the chat viewport: the
 // header line and the divider beneath it (see chatModel.View). Mouse Y
@@ -45,6 +50,42 @@ func (m *chatModel) pointAt(x, y int) selPoint {
 // drawn area — used to ignore presses on the header, input bar, or help line.
 func (m *chatModel) inViewport(y int) bool {
 	return y >= chatHeaderRows && y < chatHeaderRows+m.viewport.Height()
+}
+
+// renderCopyToast paints the "copied N chars" popup for the header's right
+// corner. The three frames give the toast a small motion arc rather than a
+// blunt show-then-vanish:
+//
+//	0 POP     — wide padding, uppercase, sparkle glyphs. Reads as a burst.
+//	1 SETTLED — normal padding, ✓ + lowercase. The readable middle.
+//	2 FADE    — dim foreground on a subtle background. Reads as receding.
+//
+// Each style is otherwise self-contained (no shared base) so frame transitions
+// don't accidentally inherit stale attributes from a previous render.
+func renderCopyToast(frame, chars int) string {
+	t := CurrentTheme()
+	switch frame {
+	case 0:
+		return lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#0a0a0c")).
+			Background(t.Accent()).
+			Bold(true).
+			Padding(0, 2).
+			Render("✦ COPIED ✦")
+	case 2:
+		return lipgloss.NewStyle().
+			Foreground(t.Dim()).
+			Background(subtleBg()).
+			Padding(0, 1).
+			Render("✓ copied " + plural(chars, "char"))
+	default:
+		return lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#0a0a0c")).
+			Background(t.Accent()).
+			Bold(true).
+			Padding(0, 1).
+			Render("✓ copied " + plural(chars, "char"))
+	}
 }
 
 // selStyle is the highlight applied to the live selection. Black text on the
@@ -98,7 +139,8 @@ func (m *chatModel) finishSelection() tea.Cmd {
 		return nil
 	}
 	n := len([]rune(text))
-	m.copyToast = "copied " + plural(n, "char")
+	m.copyToastChars = n
+	m.copyToastFrame = 0
 	m.copyToastID++
 	toastID := m.copyToastID
 	m.refreshViewport()
@@ -106,15 +148,15 @@ func (m *chatModel) finishSelection() tea.Cmd {
 	// sees exactly what was copied. The toast lives in the header, so the
 	// message-region offsets we just computed are still valid.
 	m.viewport.SetHighlights([][]int{{lo, hi}})
-	clearCmd := tea.Tick(copyToastDuration, func(time.Time) tea.Msg {
-		return clearCopyToastMsg{id: toastID}
+	tickCmd := tea.Tick(copyToastPopDuration, func(time.Time) tea.Msg {
+		return copyToastTickMsg{id: toastID}
 	})
 	if err := clipboard.WriteText(text); err != nil {
 		// OSC52 fallback for terminals where no native clipboard tool is
 		// reachable (e.g. over SSH). Best-effort; the toast already reported.
-		return tea.Batch(clearCmd, tea.SetClipboard(text))
+		return tea.Batch(tickCmd, tea.SetClipboard(text))
 	}
-	return clearCmd
+	return tickCmd
 }
 
 // clearSelection drops any visible highlight and resets in-progress state.

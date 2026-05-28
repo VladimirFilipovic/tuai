@@ -138,11 +138,14 @@ type chatModel struct {
 	selAnchor selPoint
 	selCursor selPoint
 
-	// copyToast is the "copied N chars" popup shown in the header's right
-	// corner after a drag-selection is released. copyToastID lets a fresh
-	// copy invalidate the previous one's pending clear-tick.
-	copyToast   string
-	copyToastID int
+	// Copy-toast animation state for the "copied N chars" popup in the
+	// header's right corner. copyToastChars==0 means hidden. copyToastFrame
+	// drives the three render styles (pop → settled → fade); see
+	// copyToastTickMsg in chat_select.go. copyToastID invalidates stale
+	// ticks when a fresh copy lands mid-animation.
+	copyToastChars int
+	copyToastFrame int
+	copyToastID    int
 }
 
 type chunkMsg struct {
@@ -272,12 +275,27 @@ func (m chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 		}
 		return m, nil
 
-	case clearCopyToastMsg:
-		// Only clear if this tick matches the most recent copy. A newer copy
-		// would have bumped copyToastID, and we don't want its toast cut short
-		// by an older tick firing.
-		if msg.id == m.copyToastID {
-			m.copyToast = ""
+	case copyToastTickMsg:
+		// Stale ticks (from a previous copy whose id no longer matches) are
+		// dropped so they can't yank a fresh toast off-screen early.
+		if msg.id != m.copyToastID {
+			return m, nil
+		}
+		id := m.copyToastID
+		switch m.copyToastFrame {
+		case 0: // pop → settled
+			m.copyToastFrame = 1
+			return m, tea.Tick(copyToastHoldDuration, func(time.Time) tea.Msg {
+				return copyToastTickMsg{id: id}
+			})
+		case 1: // settled → fade
+			m.copyToastFrame = 2
+			return m, tea.Tick(copyToastFadeDuration, func(time.Time) tea.Msg {
+				return copyToastTickMsg{id: id}
+			})
+		default: // fade → hidden
+			m.copyToastChars = 0
+			m.copyToastFrame = 0
 		}
 		return m, nil
 
@@ -1647,16 +1665,8 @@ func (m chatModel) View() string {
 	}
 	header := " " + chip + name + "  " + modelChip + meta + stat
 	headerLine := lipgloss.NewStyle().MaxWidth(m.width).Render(header)
-	if m.copyToast != "" {
-		// Right-align a punchy toast onto the header row. Theme accent bg
-		// + bold + a ✓ glyph makes it read at a glance without stealing a
-		// row of its own.
-		toast := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#0a0a0c")).
-			Background(CurrentTheme().Accent()).
-			Bold(true).
-			Padding(0, 1).
-			Render("✓ " + m.copyToast)
+	if m.copyToastChars > 0 {
+		toast := renderCopyToast(m.copyToastFrame, m.copyToastChars)
 		hw := lipgloss.Width(headerLine)
 		tw := lipgloss.Width(toast)
 		if hw+tw+1 <= m.width {
