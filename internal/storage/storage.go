@@ -65,6 +65,16 @@ func NewStore() (*Store, error) {
 	return &Store{dir: dir}, nil
 }
 
+// NewStoreAt roots a Store at an explicit directory instead of the user's
+// config dir. Mainly for tests that need a throwaway store without touching
+// the real home.
+func NewStoreAt(dir string) (*Store, error) {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, fmt.Errorf("mkdir: %w", err)
+	}
+	return &Store{dir: dir}, nil
+}
+
 func (s *Store) New(name string) *Session {
 	if name == "" {
 		name = "Session " + time.Now().Format("Jan 2 15:04")

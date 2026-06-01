@@ -16,6 +16,7 @@ import (
 	lipgloss "charm.land/lipgloss/v2"
 	"github.com/VladimirFilipovic/tuai/internal/claude"
 	"github.com/VladimirFilipovic/tuai/internal/clipboard"
+	"github.com/VladimirFilipovic/tuai/internal/prompt"
 	"github.com/VladimirFilipovic/tuai/internal/storage"
 	vimpkg "github.com/VladimirFilipovic/tuai/internal/vim"
 )
@@ -73,7 +74,7 @@ type toolEvent struct {
 type chatModel struct {
 	session    *storage.Session
 	store      *storage.Store
-	client     *claude.Client
+	client     claude.Streamer
 	viewport   viewport.Model
 	textarea   textarea.Model
 	spin       spinner.Model
@@ -164,7 +165,7 @@ type backMsg struct{}
 // session's messages without leaving the chat view.
 type clearSessionMsg struct{}
 
-func newChatModel(sess *storage.Session, store *storage.Store, client *claude.Client) chatModel {
+func newChatModel(sess *storage.Session, store *storage.Store, client claude.Streamer) chatModel {
 	ta := textarea.New()
 	ta.Placeholder = "Message Claude…  (enter send · shift+enter newline · esc cancel/back)"
 	ta.Focus()
@@ -652,7 +653,10 @@ func (m *chatModel) sendMessage(input string) tea.Cmd {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
-	ch := m.client.Stream(ctx, input, m.session.ResumeID)
+	// Inline @file references just before the prompt leaves; the stored
+	// message above keeps the user's raw text, not the expanded attachments.
+	expanded := prompt.ExpandAtRefs(input, m.client.Cwd())
+	ch := m.client.Stream(ctx, expanded, m.session.ResumeID)
 	m.streamCh = ch
 	return tea.Batch(waitChunk(ch), m.spin.Tick)
 }
@@ -699,7 +703,6 @@ func (m *chatModel) refreshViewport() {
 func (m *chatModel) hasSelection() bool {
 	return m.selAnchor != m.selCursor
 }
-
 
 func (m chatModel) View() string {
 	if m.width == 0 {

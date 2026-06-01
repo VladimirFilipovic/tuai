@@ -31,14 +31,8 @@ type sessionsModel struct {
 	filter       textinput.Model
 	filterActive bool
 
-	// projectFilter is "" (all), or a project path. "." is a sentinel for
-	// "current working directory" — resolved against os.Getwd() at filter
-	// time so the user can toggle to "only this project" with one keypress.
-	projectFilter string
-
-	// cwd is captured once at model creation. Used as the default project
-	// filter target.
-	cwd string
+	// project scopes the list to one project (tab cycles through them).
+	project projectFilter
 
 	// lastFilterNeedle remembers the filter text the last recomputeFiltered
 	// ran with. When it changes (user types or clears the query) the cursor
@@ -63,9 +57,9 @@ func newSessionsModel(store *storage.Store) sessionsModel {
 	ti.SetWidth(40)
 	cwd, _ := os.Getwd()
 	return sessionsModel{
-		store:  store,
-		filter: ti,
-		cwd:    cwd,
+		store:   store,
+		filter:  ti,
+		project: projectFilter{cwd: cwd},
 	}
 }
 
@@ -104,7 +98,7 @@ func (m sessionsModel) Update(msg tea.Msg) (sessionsModel, tea.Cmd) {
 				}
 				return m, nil
 			case "tab":
-				m.cycleProjectFilter()
+				m.project.cycle(m.sessions)
 				m.recomputeFiltered()
 				return m, nil
 			case "down", "ctrl+n":
@@ -135,7 +129,7 @@ func (m sessionsModel) Update(msg tea.Msg) (sessionsModel, tea.Cmd) {
 			m.filterActive = true
 			return m, m.filter.Focus()
 		case "tab":
-			m.cycleProjectFilter()
+			m.project.cycle(m.sessions)
 			m.recomputeFiltered()
 		case "j", "down":
 			if m.cursor < len(m.filtered)-1 {
@@ -172,9 +166,9 @@ func (m sessionsModel) Update(msg tea.Msg) (sessionsModel, tea.Cmd) {
 			}
 		case "esc":
 			// Clear an active filter when the user backs out of the list.
-			if m.filter.Value() != "" || m.projectFilter != "" {
+			if m.filter.Value() != "" || m.project.active() {
 				m.filter.Reset()
-				m.projectFilter = ""
+				m.project.clear()
 				m.recomputeFiltered()
 			}
 		}
@@ -197,8 +191,8 @@ func (m sessionsModel) View() string {
 	// Filter bar: project chip + search field. Always visible so the
 	// keybindings (/, tab) are discoverable.
 	chipLabel := "project: all"
-	if m.projectFilter != "" {
-		chipLabel = "project: " + shortenProject(m.resolvedProjectFilter())
+	if m.project.active() {
+		chipLabel = "project: " + shortenProject(m.project.resolved())
 	}
 	chip := s.HeaderChip.Render(chipLabel)
 
@@ -283,7 +277,7 @@ func (m *sessionsModel) setSize(w, h int) {
 // needle, e.g. after sessionsLoadedMsg) keeps the cursor and only clamps it.
 func (m *sessionsModel) recomputeFiltered() {
 	needle := strings.TrimSpace(m.filter.Value())
-	target := m.resolvedProjectFilter()
+	target := m.project.resolved()
 	needleChanged := needle != m.lastFilterNeedle
 	m.lastFilterNeedle = needle
 
@@ -321,68 +315,6 @@ func (m *sessionsModel) recomputeFiltered() {
 	if m.cursor >= len(m.filtered) {
 		m.cursor = max(0, len(m.filtered)-1)
 	}
-}
-
-// resolvedProjectFilter expands the "." sentinel to the captured cwd so a
-// freshly-launched tui filters to "this project" by tab-toggle.
-func (m sessionsModel) resolvedProjectFilter() string {
-	if m.projectFilter == "." {
-		return m.cwd
-	}
-	return m.projectFilter
-}
-
-// cycleProjectFilter walks "" → cwd → each other project seen in sessions → "".
-func (m *sessionsModel) cycleProjectFilter() {
-	projects := m.uniqueProjects()
-	if len(projects) == 0 {
-		return
-	}
-
-	current := m.resolvedProjectFilter()
-	// Find current position in the ordered list. "" is index -1.
-	pos := -1
-	for i, p := range projects {
-		if p == current {
-			pos = i
-			break
-		}
-	}
-	next := pos + 1
-	if next >= len(projects) {
-		m.projectFilter = ""
-		return
-	}
-	if projects[next] == m.cwd {
-		m.projectFilter = "."
-	} else {
-		m.projectFilter = projects[next]
-	}
-}
-
-// uniqueProjects returns each non-empty project path that appears in the
-// loaded sessions, with cwd pushed to the front when present. Stable order
-// (by recent-first via sessions list, then alphabetical for the rest).
-func (m sessionsModel) uniqueProjects() []string {
-	seen := map[string]bool{}
-	var rest []string
-	hasCwd := false
-	for _, sess := range m.sessions {
-		if sess.Project == "" || seen[sess.Project] {
-			continue
-		}
-		seen[sess.Project] = true
-		if sess.Project == m.cwd {
-			hasCwd = true
-			continue
-		}
-		rest = append(rest, sess.Project)
-	}
-	sort.Strings(rest)
-	if hasCwd {
-		return append([]string{m.cwd}, rest...)
-	}
-	return rest
 }
 
 // shortenProject renders a project path as just the trailing directory name,

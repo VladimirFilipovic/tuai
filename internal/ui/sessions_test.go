@@ -21,7 +21,7 @@ func TestRecomputeFilteredAppliesProjectAndSearch(t *testing.T) {
 		t.Fatalf("no filter: want 3 got %d", len(m.filtered))
 	}
 
-	m.projectFilter = "/p/foo"
+	m.project.selected = "/p/foo"
 	m.recomputeFiltered()
 	if len(m.filtered) != 2 {
 		t.Fatalf("project filter: want 2 got %d", len(m.filtered))

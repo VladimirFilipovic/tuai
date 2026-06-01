@@ -170,7 +170,7 @@ func renderThinkingBlock(text string, wrap int) string {
 // prettyModelName shortens long model ids (e.g. "claude-opus-4-5-20251022")
 // for header display, and falls back to the active model from stream init
 // when the user hasn't picked one.
-func prettyModelName(c *claude.Client) string {
+func prettyModelName(c claude.Streamer) string {
 	raw := c.ModelRaw()
 	if raw == "" {
 		raw = c.ActiveModel()
