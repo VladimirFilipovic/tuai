@@ -50,6 +50,66 @@ func TestMotionWordCount(t *testing.T) {
 	}
 }
 
+func TestMotionBackward(t *testing.T) {
+	// b walks backward to the start of the previous word.
+	ta, e := newTA(t, "hello world foo", 0, 12) // cursor on 'f' of "foo"
+	press(ta, e, "b")
+	if got := ta.Column(); got != 6 {
+		t.Errorf("b from col 12: want col=6 (start of 'world'), got %d", got)
+	}
+	press(ta, e, "b")
+	if got := ta.Column(); got != 0 {
+		t.Errorf("bb: want col=0 (start of 'hello'), got %d", got)
+	}
+	// b at the start of buffer stays put.
+	press(ta, e, "b")
+	if got := ta.Column(); got != 0 {
+		t.Errorf("b at start of buffer: want col=0, got %d", got)
+	}
+}
+
+func TestMotionEndOfWord(t *testing.T) {
+	// e walks forward to the *end* of the current/next word.
+	ta, e := newTA(t, "hello world foo", 0, 0)
+	press(ta, e, "e")
+	if got := ta.Column(); got != 4 {
+		t.Errorf("e from col 0: want col=4 (end of 'hello'), got %d", got)
+	}
+	press(ta, e, "e")
+	if got := ta.Column(); got != 10 {
+		t.Errorf("ee: want col=10 (end of 'world'), got %d", got)
+	}
+}
+
+func TestMotionWordOnPunctRun(t *testing.T) {
+	// vim's `w` treats a run of punctuation as its own word: `foo.bar` is three
+	// "words" — foo, ., bar. So `w` from col 0 lands on '.' (col 3), not 'b'.
+	ta, e := newTA(t, "foo.bar baz", 0, 0)
+	press(ta, e, "w")
+	if got := ta.Column(); got != 3 {
+		t.Errorf("w on 'foo.bar': want col=3 (the '.'), got %d", got)
+	}
+	press(ta, e, "w")
+	if got := ta.Column(); got != 4 {
+		t.Errorf("ww: want col=4 (start of 'bar'), got %d", got)
+	}
+}
+
+func TestMotionWordAcrossBlankLine(t *testing.T) {
+	// vim's `w` stops on an empty line — it counts as a word boundary even
+	// though the cursor doesn't land on a character. Repeated w then crosses to
+	// the next non-blank line.
+	ta, e := newTA(t, "first\n\nsecond", 0, 0)
+	press(ta, e, "w")
+	if row := ta.Line(); row != 1 {
+		t.Errorf("w over blank line: want row=1 (the blank), got row=%d", row)
+	}
+	press(ta, e, "w")
+	if row := ta.Line(); row != 2 {
+		t.Errorf("ww: want row=2 ('second'), got row=%d", row)
+	}
+}
+
 func TestDeleteWord(t *testing.T) {
 	ta, e := newTA(t, "hello world", 0, 0)
 	press(ta, e, "d", "w")

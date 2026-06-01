@@ -117,6 +117,12 @@ func (m sessionsModel) Update(msg tea.Msg) (sessionsModel, tea.Cmd) {
 					m.cursor--
 				}
 				return m, nil
+			case "home":
+				m.cursor = 0
+				return m, nil
+			case "end":
+				m.cursor = max(0, len(m.filtered)-1)
+				return m, nil
 			}
 			var cmd tea.Cmd
 			m.filter, cmd = m.filter.Update(msg)
