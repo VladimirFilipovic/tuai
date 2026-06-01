@@ -189,6 +189,87 @@ func TestDispatchSeparatesTextBlocks(t *testing.T) {
 	}
 }
 
+func TestResultErr(t *testing.T) {
+	cases := []struct {
+		name string
+		in   streamLine
+		want string // "" = nil error
+	}{
+		{"not-error", streamLine{IsError: false}, ""},
+		{"api-status", streamLine{IsError: true, APIErrorStatus: "529"}, "claude error: 529"},
+		{"result-text", streamLine{IsError: true, Result: "rate limited"}, "claude error: rate limited"},
+		{"api-wins-over-result", streamLine{IsError: true, APIErrorStatus: "500", Result: "ignored"}, "claude error: 500"},
+		{"empty-error", streamLine{IsError: true}, "claude reported an error"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := resultErr(c.in)
+			if c.want == "" {
+				if got != nil {
+					t.Errorf("got %v, want nil", got)
+				}
+				return
+			}
+			if got == nil || got.Error() != c.want {
+				t.Errorf("got %v, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+func TestExpandAtRefs_AbsolutePath(t *testing.T) {
+	dir := t.TempDir()
+	abs := filepath.Join(dir, "abs.md")
+	if err := os.WriteFile(abs, []byte("absolute body"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// cwd != dir, so a relative ref would miss; absolute path must be honored.
+	got := expandAtRefs("look @"+abs, t.TempDir())
+	if !strings.Contains(got, "absolute body") {
+		t.Errorf("absolute @-path should inline regardless of cwd, got %q", got)
+	}
+}
+
+func TestExpandAtRefs_SkipsRefsInsideFencedCodeBlocks(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "secret.txt"), []byte("topsecret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// User is quoting another agent's output — the @-ref is inside a fence.
+	prompt := "Here's what the bot said:\n```\nplease read @secret.txt\n```\nWhat do you think?"
+	got := expandAtRefs(prompt, dir)
+	if strings.Contains(got, "topsecret") {
+		t.Errorf("@-ref inside a fenced code block must NOT be inlined; got %q", got)
+	}
+	if strings.Contains(got, "--- @secret.txt ---") {
+		t.Errorf("attachment block should not be produced for fenced @-refs")
+	}
+
+	// Sanity: an @-ref OUTSIDE the fence in the same prompt still inlines.
+	prompt2 := "Read @secret.txt and also:\n```\nignore @secret.txt here\n```"
+	got2 := expandAtRefs(prompt2, dir)
+	if !strings.Contains(got2, "topsecret") {
+		t.Errorf("non-fenced @-ref should still inline; got %q", got2)
+	}
+	// And we should only inline once even though the ref appears twice (once
+	// outside, once inside fence — the dedupe + fence skip together give 1).
+	if n := strings.Count(got2, "topsecret"); n != 1 {
+		t.Errorf("expected exactly one inline of secret content, got %d", n)
+	}
+}
+
+func TestExpandAtRefs_ParentTraversalStaysWithinCwd(t *testing.T) {
+	// @../something resolves against cwd by Join, which collapses ".." — the
+	// caller is opting into reading outside cwd. We don't *prevent* it here
+	// (that's by design; @-refs trust the user) but we do verify the
+	// resolution doesn't silently swallow content from arbitrary paths when
+	// the target doesn't exist.
+	got := expandAtRefs("see @../definitely-not-here.txt", t.TempDir())
+	if strings.Contains(got, "--- @../definitely-not-here.txt ---") {
+		t.Errorf("missing ../ file should not produce an attachment block")
+	}
+}
+
 // TestDispatchNoLeadingBreak makes sure the very first text block isn't
 // prefixed with a spurious separator.
 func TestDispatchNoLeadingBreak(t *testing.T) {

@@ -98,33 +98,87 @@ func saveDarwin() (string, error) {
 	}
 }
 
-// saveLinux tries `wl-paste` (Wayland) first, then `xclip` (X11). Returns
-// "no image on clipboard" if neither produces image bytes.
+// saveLinux tries `wl-paste` (Wayland) first, then `xclip` (X11). The PNG is
+// streamed directly to the destination file via cmd.Stdout — never buffered
+// into Go memory — so multi-hundred-MB clipboard images don't blow up the
+// TUI's RSS. Returns "no image on clipboard" only when no tool exists; tool
+// failures surface as descriptive errors so the user can act on them.
 func saveLinux() (string, error) {
+	hasWl := lookPathOK("wl-paste")
+	hasXc := lookPathOK("xclip")
+	if !hasWl && !hasXc {
+		return "", fmt.Errorf("no image on clipboard (install wl-paste or xclip)")
+	}
+
+	if hasWl {
+		path, err := pasteToFile("wl-paste", []string{"--type", "image/png"})
+		switch {
+		case err == nil:
+			return path, nil
+		case isNoClipboardData(err):
+			// fall through to X11 — Wayland may not have the selection but
+			// xclip might, when running under XWayland.
+		default:
+			return "", fmt.Errorf("wl-paste: %w", err)
+		}
+	}
+	if hasXc {
+		path, err := pasteToFile("xclip", []string{"-selection", "clipboard", "-t", "image/png", "-o"})
+		switch {
+		case err == nil:
+			return path, nil
+		case isNoClipboardData(err):
+			return "", fmt.Errorf("no image on clipboard")
+		default:
+			return "", fmt.Errorf("xclip: %w", err)
+		}
+	}
+	return "", fmt.Errorf("no image on clipboard")
+}
+
+// pasteToFile runs the clipboard-read tool with its stdout piped straight to
+// a fresh image file. Removes the file on any failure so we never leave a
+// zero-byte / half-written PNG behind. Returns ErrNoData when the tool ran
+// successfully but produced no bytes — distinguishes "empty clipboard" from
+// "tool crashed".
+func pasteToFile(bin string, args []string) (string, error) {
 	path, err := newImagePath()
 	if err != nil {
 		return "", err
 	}
-	// Wayland.
-	if _, err := exec.LookPath("wl-paste"); err == nil {
-		out, err := exec.Command("wl-paste", "--type", "image/png").Output()
-		if err == nil && len(out) > 0 {
-			if err := os.WriteFile(path, out, 0o644); err == nil {
-				return path, nil
-			}
-		}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return "", err
 	}
-	// X11.
-	if _, err := exec.LookPath("xclip"); err == nil {
-		out, err := exec.Command("xclip", "-selection", "clipboard", "-t", "image/png", "-o").Output()
-		if err == nil && len(out) > 0 {
-			if err := os.WriteFile(path, out, 0o644); err == nil {
-				return path, nil
-			}
-		}
+	cleanup := func() {
+		_ = f.Close()
+		_ = os.Remove(path)
 	}
-	return "", fmt.Errorf("no image on clipboard (install wl-paste or xclip)")
+	cmd := exec.Command(bin, args...)
+	cmd.Stdout = f
+	if runErr := cmd.Run(); runErr != nil {
+		cleanup()
+		return "", runErr
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(path)
+		return "", err
+	}
+	st, err := os.Stat(path)
+	if err != nil {
+		_ = os.Remove(path)
+		return "", err
+	}
+	if st.Size() == 0 {
+		_ = os.Remove(path)
+		return "", errNoClipboardData
+	}
+	return path, nil
 }
+
+var errNoClipboardData = fmt.Errorf("no clipboard data")
+
+func isNoClipboardData(err error) bool { return err == errNoClipboardData }
 
 // WriteText puts s on the OS clipboard. Uses the platform's native clipboard
 // tool (pbcopy on macOS; wl-copy then xclip on Linux) by piping s to its

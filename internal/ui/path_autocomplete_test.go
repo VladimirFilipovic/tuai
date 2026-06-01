@@ -162,6 +162,41 @@ func TestAcceptInsertsPath(t *testing.T) {
 	}
 }
 
+func TestAutocompleteSelResetsOnFragmentChange(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "alpha.go"), "x")
+	mustWrite(t, filepath.Join(dir, "alpine.go"), "x")
+	mustWrite(t, filepath.Join(dir, "anvil.go"), "x")
+	mustWrite(t, filepath.Join(dir, "alright.go"), "x")
+	chdir(t, dir)
+
+	ta := textarea.New()
+	ta.SetWidth(80)
+	ta.SetHeight(5)
+	ta.SetValue("@a")
+
+	var ac pathAutocompleteModel
+	ac.refresh(ta)
+	if len(ac.matches) < 3 {
+		t.Fatalf("expected ≥3 matches for @a, got %d", len(ac.matches))
+	}
+
+	// Scroll selection down to a non-zero index.
+	ac.moveDown()
+	ac.moveDown()
+	if ac.sel == 0 {
+		t.Fatal("test setup: expected sel > 0 after two moveDown")
+	}
+
+	// Narrow the query — fewer matches, but sel would still be a valid index
+	// in the old list. The fix resets sel to 0 so it tracks the new top match.
+	ta.SetValue("@al")
+	ac.refresh(ta)
+	if ac.sel != 0 {
+		t.Errorf("sel should reset to 0 on fragment change; got %d", ac.sel)
+	}
+}
+
 func TestStripANSI(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"", ""},

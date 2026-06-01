@@ -244,8 +244,9 @@ func (m *chatModel) selectionRange() (int, int) {
 }
 
 // byteOffsetOf converts a (line, col) content position into a byte offset into
-// the lines joined by "\n". col is a cell index; it's clamped to the line's
-// rune length and mapped to the matching byte boundary.
+// the lines joined by "\n". col is a *cell* index (not a rune index) — wide
+// runes (CJK, emoji, box-drawing pairs) occupy two cells per rune, so we walk
+// runes accumulating cell width to find the rune boundary that matches.
 func byteOffsetOf(lines []string, line, col int) int {
 	if line < 0 {
 		line = 0
@@ -260,12 +261,41 @@ func byteOffsetOf(lines []string, line, col int) int {
 	if line >= len(lines) {
 		return off
 	}
-	runes := []rune(lines[line])
-	if col > len(runes) {
-		col = len(runes)
-	}
-	off += len(string(runes[:col]))
+	off += runeByteOffsetForCol(lines[line], col)
 	return off
+}
+
+// runeByteOffsetForCol walks line's runes, accumulating per-rune cell width
+// from lipgloss.Width, and returns the byte offset of the first rune whose
+// start lies at or past col cells. Past EOL it clamps to line length.
+func runeByteOffsetForCol(line string, col int) int {
+	if col <= 0 {
+		return 0
+	}
+	cells := 0
+	byteIdx := 0
+	for i, r := range line {
+		rw := lipgloss.Width(string(r))
+		if cells+rw > col {
+			return i
+		}
+		cells += rw
+		byteIdx = i + utf8RuneLen(r)
+	}
+	return byteIdx
+}
+
+func utf8RuneLen(r rune) int {
+	switch {
+	case r < 0x80:
+		return 1
+	case r < 0x800:
+		return 2
+	case r < 0x10000:
+		return 3
+	default:
+		return 4
+	}
 }
 
 // cleanSelection turns a raw slice of the rendered scrollback into plain text:

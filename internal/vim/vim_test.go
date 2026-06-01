@@ -133,3 +133,59 @@ func TestGotoTopBottom(t *testing.T) {
 		t.Errorf("G: want row=3, got %d", got)
 	}
 }
+
+func TestGotoLineWithCount(t *testing.T) {
+	// "5G" jumps to line 5 (row 4). Regression for: plain G ignoring count.
+	ta, e := newTA(t, "a\nb\nc\nd\ne\nf\ng", 0, 0)
+	press(ta, e, "5", "G")
+	if got := ta.Line(); got != 4 {
+		t.Errorf("5G: want row=4, got %d", got)
+	}
+
+	// Out-of-range count clamps to last line.
+	ta2, e2 := newTA(t, "a\nb\nc", 0, 0)
+	press(ta2, e2, "9", "9", "G")
+	if got := ta2.Line(); got != 2 {
+		t.Errorf("99G on 3-line buf: want row=2 (last), got %d", got)
+	}
+}
+
+func TestUnknownGPrefixClearsState(t *testing.T) {
+	// 'g' followed by an unknown key must not leave a dangling operator that
+	// turns the next keypress into a delete target. After 'd', 'g', 'x',
+	// pressing 'l' should move the cursor right — not delete it.
+	ta, e := newTA(t, "abc", 0, 0)
+	press(ta, e, "d", "g", "x") // 'gx' is unknown; abandons operator
+	press(ta, e, "l")           // should be a plain right motion
+	if got := ta.Value(); got != "abc" {
+		t.Errorf("buffer should be untouched, got %q", got)
+	}
+	if e.op != 0 {
+		t.Errorf("operator should be cleared after abandoned g-prefix, got %q", e.op)
+	}
+}
+
+func TestPasteLinewiseWithCount(t *testing.T) {
+	// Regression: 3p of a yy'd line used to concatenate into one line.
+	ta, e := newTA(t, "first\nsecond", 0, 0)
+	press(ta, e, "y", "y")    // yank line 0 linewise
+	press(ta, e, "3", "p")    // paste 3 times below
+	want := "first\nfirst\nfirst\nfirst\nsecond"
+	if got := ta.Value(); got != want {
+		t.Errorf("yy then 3p:\n  got  %q\n  want %q", got, want)
+	}
+}
+
+func TestPasteLinewiseMultiLineRegisterWithCount(t *testing.T) {
+	// Yank two lines linewise, then 2p — six new lines should appear below.
+	ta, e := newTA(t, "a\nb\nc", 0, 0)
+	press(ta, e, "2", "y", "y") // yank 2 lines linewise (a, b)
+	press(ta, e, "2", "p")      // paste 2 copies below row 0
+	// After paste cursor should be at the first inserted line; content:
+	// original a, b, c → with a,b yanked and inserted twice after row 0:
+	// a / a / b / a / b / b / c
+	want := "a\na\nb\na\nb\nb\nc"
+	if got := ta.Value(); got != want {
+		t.Errorf("2yy then 2p:\n  got  %q\n  want %q", got, want)
+	}
+}

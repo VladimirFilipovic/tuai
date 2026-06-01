@@ -21,6 +21,48 @@ func cellIndexOf(line, text string) int {
 	return lipgloss.Width(line[:at])
 }
 
+func TestByteOffsetOf_WideRunes(t *testing.T) {
+	// "你好 world" in cells:
+	//   你=2, 好=2, space=1, w=1, o=1, r=1, l=1, d=1 → total 10
+	// In bytes: each CJK rune is 3 bytes, space=1, ASCII=1 → "你好" = 6, " world" = 6.
+	lines := []string{"你好 world"}
+
+	cases := []struct {
+		name        string
+		col         int
+		wantByteOff int // offset into "你好 world"
+	}{
+		{"col 0 → start", 0, 0},
+		{"col 2 → after 你", 2, 3},
+		{"col 4 → after 好", 4, 6},
+		{"col 5 → after space", 5, 7},
+		{"col 10 → end", 10, 12},
+		{"col past end clamps", 99, 12},
+		// Critical: col 1 lands inside the wide rune 你. Should land at the
+		// rune boundary BEFORE it (offset 0), not split bytes.
+		{"col 1 inside wide rune clamps before", 1, 0},
+		{"col 3 inside 好 clamps before", 3, 3},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := byteOffsetOf(lines, 0, c.col)
+			if got != c.wantByteOff {
+				t.Errorf("byteOffsetOf col=%d: got %d, want %d", c.col, got, c.wantByteOff)
+			}
+		})
+	}
+}
+
+func TestByteOffsetOf_PlainASCIIUnchanged(t *testing.T) {
+	lines := []string{"hello world", "second line"}
+	if got := byteOffsetOf(lines, 0, 5); got != 5 {
+		t.Errorf("col 5 on ASCII line: got %d, want 5", got)
+	}
+	if got := byteOffsetOf(lines, 1, 6); got != len("hello world")+1+6 {
+		t.Errorf("col 6 on line 1: got %d, want %d", got, len("hello world")+1+6)
+	}
+}
+
 func TestStripBubbleFrame(t *testing.T) {
 	cases := []struct {
 		name string

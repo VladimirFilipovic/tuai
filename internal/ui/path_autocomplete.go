@@ -63,12 +63,13 @@ func (p *pathAutocompleteModel) refresh(ta textarea.Model) {
 	if p.active && frag == p.fragment {
 		return // nothing changed
 	}
+	// Fragment changed: a new query means the previous selected index points
+	// at a different match (or none). Reset to the top so the highlight
+	// tracks the best new match rather than parking on an unrelated entry.
 	p.active = true
 	p.fragment = frag
 	p.matches = searchPaths(frag)
-	if p.sel >= len(p.matches) {
-		p.sel = 0
-	}
+	p.sel = 0
 }
 
 func (p *pathAutocompleteModel) close() {

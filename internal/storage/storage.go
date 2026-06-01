@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"time"
 
@@ -56,7 +57,9 @@ func NewStore() (*Store, error) {
 		return nil, fmt.Errorf("home dir: %w", err)
 	}
 	dir := filepath.Join(home, ".config", "tuai", "sessions")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	// 0o700 — session files contain transcript content (sometimes secrets
+	// the user pasted into a prompt). Don't let other local users read.
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("mkdir: %w", err)
 	}
 	return &Store{dir: dir}, nil
@@ -80,17 +83,49 @@ func (s *Store) New(name string) *Session {
 	}
 }
 
+// validID rejects ids that would escape the sessions dir or smuggle a path
+// separator. Real IDs are UUIDs (uuid.New().String()), so the allowed set is
+// narrow; this guards future callers that might forward an externally-sourced
+// id (imported session, URL param, CLI flag).
+var idRe = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+
+func (s *Store) idPath(id string) (string, error) {
+	if id == "" || !idRe.MatchString(id) {
+		return "", fmt.Errorf("invalid session id: %q", id)
+	}
+	return filepath.Join(s.dir, id+".json"), nil
+}
+
 func (s *Store) Save(sess *Session) error {
 	sess.UpdatedAt = time.Now()
 	data, err := json.MarshalIndent(sess, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(s.dir, sess.ID+".json"), data, 0o644)
+	final, err := s.idPath(sess.ID)
+	if err != nil {
+		return err
+	}
+	// Write to a sibling .tmp then rename — atomic on POSIX, so a crash
+	// mid-flush leaves the prior session intact rather than half-written
+	// JSON that Load() will silently drop.
+	tmp := final + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, final); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 func (s *Store) Load(id string) (*Session, error) {
-	data, err := os.ReadFile(filepath.Join(s.dir, id+".json"))
+	p, err := s.idPath(id)
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(p)
 	if err != nil {
 		return nil, err
 	}
@@ -125,5 +160,9 @@ func (s *Store) List() ([]*Session, error) {
 }
 
 func (s *Store) Delete(id string) error {
-	return os.Remove(filepath.Join(s.dir, id+".json"))
+	p, err := s.idPath(id)
+	if err != nil {
+		return err
+	}
+	return os.Remove(p)
 }

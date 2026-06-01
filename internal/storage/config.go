@@ -22,7 +22,7 @@ func configPath() (string, error) {
 		return "", err
 	}
 	dir := filepath.Join(home, ".config", "tuai")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
 	}
 	return filepath.Join(dir, "config.json"), nil
@@ -53,5 +53,13 @@ func SaveConfig(cfg Config) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(p, data, 0o644)
+	tmp := p + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, p); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
 }

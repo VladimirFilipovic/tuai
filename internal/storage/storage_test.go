@@ -148,5 +148,75 @@ func writeRaw(s *Store, sess *Session) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(s.dir, sess.ID+".json"), data, 0o644)
+	return os.WriteFile(filepath.Join(s.dir, sess.ID+".json"), data, 0o600)
+}
+
+func TestStore_LoadRejectsTraversalID(t *testing.T) {
+	s := newTestStore(t)
+	bad := []string{
+		"../passwd",
+		"../../etc/passwd",
+		"a/b",
+		"a/../b",
+		"",
+		"foo\x00bar",
+		"with space",
+	}
+	for _, id := range bad {
+		if _, err := s.Load(id); err == nil {
+			t.Errorf("Load(%q) should reject malformed id, got nil error", id)
+		}
+		if err := s.Delete(id); err == nil {
+			t.Errorf("Delete(%q) should reject malformed id, got nil error", id)
+		}
+	}
+}
+
+func TestStore_SaveIsAtomic(t *testing.T) {
+	s := newTestStore(t)
+	sess := s.New("atomic")
+	sess.Messages = []Message{{Role: RoleUser, Content: "v1"}}
+	if err := s.Save(sess); err != nil {
+		t.Fatal(err)
+	}
+	// Snapshot v1 bytes from disk.
+	v1, err := os.ReadFile(filepath.Join(s.dir, sess.ID+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Now Save v2 and confirm no .tmp file remains.
+	sess.Messages = append(sess.Messages, Message{Role: RoleAssistant, Content: "v2"})
+	if err := s.Save(sess); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(s.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if filepath.Ext(e.Name()) == ".tmp" {
+			t.Errorf("leftover .tmp file: %s", e.Name())
+		}
+	}
+	// v2 must differ from v1 (sanity-check the test does what we think).
+	v2, _ := os.ReadFile(filepath.Join(s.dir, sess.ID+".json"))
+	if string(v1) == string(v2) {
+		t.Error("Save did not update the file")
+	}
+}
+
+func TestStore_SaveUses0600Perms(t *testing.T) {
+	s := newTestStore(t)
+	sess := s.New("perm-check")
+	if err := s.Save(sess); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(s.dir, sess.ID+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Errorf("session file perm = %o, want 0600", perm)
+	}
 }

@@ -155,6 +155,15 @@ func (c *Client) Stream(ctx context.Context, prompt, resumeID string) <-chan Chu
 			}
 			c.dispatchLine(ctx, line, ch, st)
 		}
+		// Surface scanner errors (e.g. bufio.ErrTooLong on a >32MB line, or
+		// a mid-stream read failure). Without this a truncated stream looks
+		// indistinguishable from a clean EOF and the user sees the turn just
+		// stop with no error.
+		if scanErr := scanner.Err(); scanErr != nil && ctx.Err() == nil {
+			_ = cmd.Wait() // reap the child; output already truncated
+			send(ctx, ch, Chunk{Err: fmt.Errorf("stream read: %w", scanErr), Done: true})
+			return
+		}
 
 		// Wait for process to exit; surface stderr if non-zero.
 		waitErr := cmd.Wait()
@@ -166,11 +175,22 @@ func (c *Client) Stream(ctx context.Context, prompt, resumeID string) <-chan Chu
 			if tail != "" {
 				msg = fmt.Sprintf("%s: %s", waitErr, lastLine(tail))
 			}
-			ch <- Chunk{Err: errors.New(msg), Done: true}
+			// Non-blocking: if the consumer has stopped reading (e.g. the
+			// UI already moved on), drop the final chunk rather than leak
+			// this goroutine on a full buffer.
+			select {
+			case ch <- Chunk{Err: errors.New(msg), Done: true}:
+			default:
+			}
 			return
 		}
 		if ctx.Err() != nil {
-			ch <- Chunk{Err: ctx.Err(), Done: true}
+			// Consumer cancelled — they already know. Try to deliver but
+			// never block: defer close(ch) signals end-of-stream regardless.
+			select {
+			case ch <- Chunk{Err: ctx.Err(), Done: true}:
+			default:
+			}
 			return
 		}
 	}()
@@ -295,6 +315,33 @@ func lastLine(s string) string {
 
 var atRefRe = regexp.MustCompile(`(^|\s)@([^\s]+)`)
 
+// stripFencedBlocks replaces the body of every ``` ... ``` fenced block with
+// spaces (preserving line/byte structure isn't necessary — we just need a
+// version of the prompt that has no @-refs *inside* a fence). Used by
+// expandAtRefs so a user quoting `@.env` in a code fence doesn't accidentally
+// inline that file into the outgoing prompt.
+func stripFencedBlocks(prompt string) string {
+	var out strings.Builder
+	out.Grow(len(prompt))
+	lines := strings.Split(prompt, "\n")
+	inFence := false
+	for i, ln := range lines {
+		if i > 0 {
+			out.WriteByte('\n')
+		}
+		trim := strings.TrimSpace(ln)
+		if strings.HasPrefix(trim, "```") || strings.HasPrefix(trim, "~~~") {
+			inFence = !inFence
+			continue
+		}
+		if inFence {
+			continue
+		}
+		out.WriteString(ln)
+	}
+	return out.String()
+}
+
 func isImageExt(p string) bool {
 	switch strings.ToLower(filepath.Ext(p)) {
 	case ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp":
@@ -305,9 +352,12 @@ func isImageExt(p string) bool {
 
 // expandAtRefs scans the prompt for @-references (e.g. `@foo.go`, `@~/notes.md`,
 // `@./src/x.py`) and appends the file contents at the end of the prompt as
-// fenced attachment blocks. Unresolved refs are left as plain text.
+// fenced attachment blocks. @-refs inside fenced code blocks (``` ... ```)
+// are skipped — the user is quoting something, not asking to inline it.
+// Unresolved refs are left as plain text.
 func expandAtRefs(prompt, cwd string) string {
-	matches := atRefRe.FindAllStringSubmatch(prompt, -1)
+	prose := stripFencedBlocks(prompt)
+	matches := atRefRe.FindAllStringSubmatch(prose, -1)
 	if len(matches) == 0 {
 		return prompt
 	}

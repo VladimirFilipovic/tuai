@@ -7,10 +7,11 @@ import (
 	"sort"
 	"strings"
 	"time"
-	"unicode"
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+	lipgloss "charm.land/lipgloss/v2"
+	"github.com/VladimirFilipovic/tuai/internal/fuzzy"
 	"github.com/VladimirFilipovic/tuai/internal/storage"
 )
 
@@ -38,6 +39,12 @@ type sessionsModel struct {
 	// cwd is captured once at model creation. Used as the default project
 	// filter target.
 	cwd string
+
+	// lastFilterNeedle remembers the filter text the last recomputeFiltered
+	// ran with. When it changes (user types or clears the query) the cursor
+	// resets to 0 so the highlight tracks the new top result, not the index
+	// it happened to be parked at.
+	lastFilterNeedle string
 }
 
 type sessionsLoadedMsg struct {
@@ -222,14 +229,15 @@ func (m sessionsModel) View() string {
 				relTime(sess.UpdatedAt),
 				len(sess.Messages))
 
-			nameWidth := m.width - len(meta) - 8
-			if nameWidth > 0 && len(name) > nameWidth {
-				name = name[:nameWidth-1] + "…"
+			nameWidth := m.width - lipgloss.Width(meta) - 8
+			if nameWidth > 0 {
+				name = truncateLine(name, nameWidth)
 			}
 
 			padding := ""
-			if nameWidth > len(name) {
-				padding = strings.Repeat(" ", nameWidth-len(name))
+			nameCells := lipgloss.Width(name)
+			if nameWidth > nameCells {
+				padding = strings.Repeat(" ", nameWidth-nameCells)
 			}
 
 			metaStr := s.SessionMeta.Render(meta)
@@ -263,10 +271,15 @@ func (m *sessionsModel) setSize(w, h int) {
 }
 
 // recomputeFiltered rebuilds the filtered index slice based on the current
-// project filter and fuzzy search text. Cursor is clamped to the new bounds.
+// project filter and fuzzy search text. Cursor resets to 0 when the search
+// needle changes (so the highlight tracks the new top match rather than
+// staying parked on the previous numeric index); a pure list refresh (same
+// needle, e.g. after sessionsLoadedMsg) keeps the cursor and only clamps it.
 func (m *sessionsModel) recomputeFiltered() {
 	needle := strings.TrimSpace(m.filter.Value())
 	target := m.resolvedProjectFilter()
+	needleChanged := needle != m.lastFilterNeedle
+	m.lastFilterNeedle = needle
 
 	type scored struct {
 		idx   int
@@ -277,7 +290,7 @@ func (m *sessionsModel) recomputeFiltered() {
 		if target != "" && sess.Project != target {
 			continue
 		}
-		score, ok := fuzzyScore(sess.Name, needle)
+		score, ok := fuzzy.Score(sess.Name, needle)
 		if !ok {
 			continue
 		}
@@ -295,6 +308,9 @@ func (m *sessionsModel) recomputeFiltered() {
 	m.filtered = m.filtered[:0]
 	for _, x := range matched {
 		m.filtered = append(m.filtered, x.idx)
+	}
+	if needleChanged {
+		m.cursor = 0
 	}
 	if m.cursor >= len(m.filtered) {
 		m.cursor = max(0, len(m.filtered)-1)
@@ -370,57 +386,6 @@ func shortenProject(p string) string {
 		return "—"
 	}
 	return filepath.Base(p)
-}
-
-// fuzzyScore returns (score, true) if every rune of needle appears in haystack
-// in order (case-insensitive). The score rewards contiguous runs and matches
-// at word boundaries so "fb" beats "f...b" inside "foo-bar".
-func fuzzyScore(haystack, needle string) (int, bool) {
-	if needle == "" {
-		return 0, true
-	}
-	hs := []rune(strings.ToLower(haystack))
-	ns := []rune(strings.ToLower(needle))
-
-	score := 0
-	prevMatch := -2
-	hi := 0
-	for _, nr := range ns {
-		found := -1
-		for ; hi < len(hs); hi++ {
-			if hs[hi] == nr {
-				found = hi
-				break
-			}
-		}
-		if found == -1 {
-			return 0, false
-		}
-		// Bonuses: adjacent to previous match, or at a word boundary.
-		if found == prevMatch+1 {
-			score += 5
-		} else {
-			score += 1
-		}
-		if found == 0 || isBoundary(hs, found) {
-			score += 3
-		}
-		prevMatch = found
-		hi++
-	}
-	// Slight bonus for shorter haystacks (better signal/noise).
-	if len(hs) < 20 {
-		score += 20 - len(hs)
-	}
-	return score, true
-}
-
-func isBoundary(rs []rune, i int) bool {
-	if i <= 0 {
-		return true
-	}
-	prev := rs[i-1]
-	return !unicode.IsLetter(prev) && !unicode.IsDigit(prev)
 }
 
 func relTime(t time.Time) string {

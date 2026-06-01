@@ -7,39 +7,6 @@ import (
 	"github.com/VladimirFilipovic/tuai/internal/storage"
 )
 
-func TestFuzzyScoreMatches(t *testing.T) {
-	cases := []struct {
-		hay, needle string
-		match       bool
-	}{
-		{"hello world", "hw", true},
-		{"hello world", "hlo", true},
-		{"hello world", "xyz", false},
-		{"hello world", "", true},
-		{"Foo Bar", "fb", true},        // case-insensitive
-		{"render-cache fix", "rcf", true},
-	}
-	for _, c := range cases {
-		_, ok := fuzzyScore(c.hay, c.needle)
-		if ok != c.match {
-			t.Errorf("fuzzyScore(%q,%q) match=%v want %v", c.hay, c.needle, ok, c.match)
-		}
-	}
-}
-
-func TestFuzzyScoreRanksContiguousHigher(t *testing.T) {
-	// "fb" should score higher in "foo-bar" (word-boundary match on 'b')
-	// than in "fxxxxxxxxxxxxxb" (long sparse match).
-	good, ok1 := fuzzyScore("foo-bar", "fb")
-	bad, ok2 := fuzzyScore("fxxxxxxxxxxxxxb", "fb")
-	if !ok1 || !ok2 {
-		t.Fatalf("both should match: %v %v", ok1, ok2)
-	}
-	if good <= bad {
-		t.Errorf("word-boundary match (%d) should score higher than sparse (%d)", good, bad)
-	}
-}
-
 func TestRecomputeFilteredAppliesProjectAndSearch(t *testing.T) {
 	now := time.Now()
 	m := sessionsModel{
@@ -73,5 +40,35 @@ func TestRecomputeFilteredAppliesProjectAndSearch(t *testing.T) {
 	}
 	if m.cursor != 0 {
 		t.Errorf("cursor should clamp to 0 when filtered is empty, got %d", m.cursor)
+	}
+}
+
+func TestRecomputeFilteredResetsCursorOnNeedleChange(t *testing.T) {
+	now := time.Now()
+	m := sessionsModel{
+		sessions: []*storage.Session{
+			{ID: "1", Name: "alpha", UpdatedAt: now},
+			{ID: "2", Name: "beta", UpdatedAt: now},
+			{ID: "3", Name: "gamma", UpdatedAt: now},
+			{ID: "4", Name: "delta", UpdatedAt: now},
+			{ID: "5", Name: "epsilon", UpdatedAt: now},
+		},
+	}
+	m.recomputeFiltered()
+	// Scroll down to index 3.
+	m.cursor = 3
+
+	// Type a query that still matches enough items to keep index 3 in range.
+	m.filter.SetValue("a")
+	m.recomputeFiltered()
+	if m.cursor != 0 {
+		t.Errorf("cursor should reset to 0 when filter text changes; got %d", m.cursor)
+	}
+
+	// Sanity: a recompute with same needle (e.g. loadSessions refresh) keeps cursor.
+	m.cursor = 1
+	m.recomputeFiltered()
+	if m.cursor != 1 {
+		t.Errorf("same-needle recompute should preserve cursor; got %d (want 1)", m.cursor)
 	}
 }
