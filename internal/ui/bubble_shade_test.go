@@ -36,6 +36,36 @@ func TestBubble_NoBgGapAfterReset_CodeBlock(t *testing.T) {
 	assertNoBgGap(t, out)
 }
 
+func TestParseHexRGB(t *testing.T) {
+	r, g, b, ok := parseHexRGB("#3c3836")
+	if !ok || r != 60 || g != 56 || b != 54 {
+		t.Fatalf("parseHexRGB(#3c3836) = %d,%d,%d ok=%v; want 60,56,54 true", r, g, b, ok)
+	}
+	if _, _, _, ok := parseHexRGB("nope"); ok {
+		t.Error("parseHexRGB should fail on a non-hex string")
+	}
+	if _, _, _, ok := parseHexRGB("#abc"); ok {
+		t.Error("parseHexRGB should fail on a 3-digit hex (only #rrggbb supported)")
+	}
+}
+
+// TestBubble_LightMode_BodyTextHasExplicitFg guards the "light theme
+// unreadable" fix: in light mode the bubble must paint prose with the theme's
+// dark code/text foreground, never leaving it to the terminal default (which on
+// a dark terminal is light text — invisible on the cream bubble).
+func TestBubble_LightMode_BodyTextHasExplicitFg(t *testing.T) {
+	defer func() { appearanceMode = ""; rebuildStyles() }()
+	appearanceMode = "light"
+	rebuildStyles()
+
+	// Default theme is opencode; its light codeFg is #3c3836 → 38;2;60;56;54.
+	body := padLinesToWidth(renderMarkdown("Hello readable world", 40), 40)
+	out := shadeBubble(s.AssistantBubble.Render(body))
+	if !strings.Contains(out, "38;2;60;56;54") {
+		t.Errorf("light-mode bubble body text should carry an explicit dark fg, got:\n%q", out)
+	}
+}
+
 func TestWrapLine_MultiByteRunesNotSplit(t *testing.T) {
 	cases := []struct {
 		name  string

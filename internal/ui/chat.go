@@ -558,14 +558,21 @@ func (m chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 		}
 		return m, nil
 	case tea.MouseMotionMsg:
-		// Drag with the left button held extends the live selection.
-		if m.selActive && k.Button == tea.MouseLeft {
+		// Any motion while a selection is in progress extends it. We gate on
+		// selActive (set only by a left press in the viewport) rather than
+		// re-checking k.Button: some terminal/decoder combinations report
+		// drag-motion with Button=MouseNone, and re-checking for MouseLeft
+		// there would silently swallow the whole drag — no highlight, no copy.
+		if m.selActive {
 			m.updateSelection(k.X, k.Y)
 		}
 		return m, nil
 	case tea.MouseReleaseMsg:
-		// Release ends the drag: copy the spanned text to the clipboard.
+		// Release ends the drag: snap the selection to the release point (the
+		// last motion event may have been coalesced away before the button came
+		// up) and copy the spanned text to the clipboard.
 		if m.selActive {
+			m.updateSelection(k.X, k.Y)
 			return m, m.finishSelection()
 		}
 		return m, nil

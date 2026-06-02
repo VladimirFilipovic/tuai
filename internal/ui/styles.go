@@ -113,6 +113,7 @@ func rebuildStyles() {
 			Border(lipgloss.ThickBorder(), false, false, false, true).
 			BorderForeground(t.User()).
 			Background(subtleBg()).
+			Foreground(t.CodeFg()).
 			Padding(0, 2).
 			MarginLeft(2),
 		AssistantLabel: lipgloss.NewStyle().Bold(true).Foreground(t.Assistant()),
@@ -120,6 +121,7 @@ func rebuildStyles() {
 			Border(lipgloss.ThickBorder(), false, false, false, true).
 			BorderForeground(t.Assistant()).
 			Background(subtleBg()).
+			Foreground(t.CodeFg()).
 			Padding(0, 2).
 			MarginLeft(2),
 		AssistantBar: lipgloss.NewStyle().Foreground(t.Assistant()),

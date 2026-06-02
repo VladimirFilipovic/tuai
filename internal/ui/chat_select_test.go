@@ -289,6 +289,25 @@ func assertWrappedByYellow(t *testing.T, out, text string) {
 	}
 }
 
+// TestDragMotionWithoutLeftButtonStillExtends guards the fix for terminals
+// that report drag-motion with Button=MouseNone instead of MouseLeft: once a
+// left press has started a selection, any motion must keep extending it.
+func TestDragMotionWithoutLeftButtonStillExtends(t *testing.T) {
+	m := buildSelectableChat("  ┃  alpha\n  ┃  beta")
+
+	down := tea.MouseClickMsg{Button: tea.MouseLeft, X: 5, Y: 2}
+	m, _ = m.Update(down)
+	if !m.selActive {
+		t.Fatal("left press should start a selection")
+	}
+	// Motion with no button reported — the quirk we're defending against.
+	drag := tea.MouseMotionMsg{Button: tea.MouseNone, X: 9, Y: 3}
+	m, _ = m.Update(drag)
+	if m.selCursor != (selPoint{line: 1, col: 9}) {
+		t.Fatalf("cursor = %+v, want {1,9} — motion must extend regardless of button", m.selCursor)
+	}
+}
+
 func TestMousePressOutsideViewportIgnored(t *testing.T) {
 	m := buildSelectableChat("  ┃  alpha")
 	// y=0 is the header row, above the viewport.

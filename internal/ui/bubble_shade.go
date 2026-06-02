@@ -1,7 +1,9 @@
 package ui
 
 import (
+	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"charm.land/bubbles/v2/textarea"
@@ -65,6 +67,34 @@ func bubbleBgSGR() string {
 	return "\x1b[48;2;241;235;217m" // #f1ebd9
 }
 
+// bubbleFgSGR returns the truecolor foreground SGR for body text inside a
+// bubble — the active theme's code/text foreground. Spliced back in after every
+// interior SGR reset (alongside the bg) so plain prose following a bold or
+// inline-code span keeps a readable color instead of falling back to the
+// terminal default. On a dark terminal that default is light text, which is
+// unreadable on the light theme's cream bubble — the "light theme unreadable"
+// bug. Returns "" for an unparseable color, leaving the bubble's own fg in play.
+func bubbleFgSGR() string {
+	r, g, b, ok := parseHexRGB(CurrentTheme().active().codeFg)
+	if !ok {
+		return ""
+	}
+	return fmt.Sprintf("\x1b[38;2;%d;%d;%dm", r, g, b)
+}
+
+// parseHexRGB parses a "#rrggbb" string into its 8-bit components.
+func parseHexRGB(hex string) (r, g, b int, ok bool) {
+	hex = strings.TrimPrefix(hex, "#")
+	if len(hex) != 6 {
+		return 0, 0, 0, false
+	}
+	v, err := strconv.ParseUint(hex, 16, 32)
+	if err != nil {
+		return 0, 0, 0, false
+	}
+	return int(v >> 16 & 0xff), int(v >> 8 & 0xff), int(v & 0xff), true
+}
+
 // pageBgSGR is the SGR for the chat *page* background — what fills the area
 // around bubbles, gap rows, label margins, and any spot the viewport doesn't
 // otherwise paint. Picked one step darker than the bubble bg so bubbles still
@@ -109,16 +139,20 @@ func shadePage(rendered string, width int) string {
 // Each line gets a trailing explicit reset so the active bg never leaks past
 // EOL into the next row.
 func shadeBubble(rendered string) string {
-	bg := bubbleBgSGR()
-	withBg := func(m string) string { return m + bg }
+	// Re-apply both the bubble fg and bg after each reset: bg so the shaded
+	// surface stays continuous, fg so prose between styled spans keeps a
+	// readable color (see bubbleFgSGR). Order is fg-then-bg; both are
+	// independent SGR params so neither clobbers the other.
+	tail := bubbleFgSGR() + bubbleBgSGR()
+	withTail := func(m string) string { return m + tail }
 
 	lines := strings.Split(rendered, "\n")
 	for i, ln := range lines {
-		processed := resetSGR.ReplaceAllStringFunc(ln, withBg)
-		// We just appended bg after every reset, including the closing reset
-		// at the end of the line. Strip that trailing bg so the line ends
-		// clean and bg doesn't bleed into whatever follows.
-		processed = strings.TrimSuffix(processed, bg)
+		processed := resetSGR.ReplaceAllStringFunc(ln, withTail)
+		// We just appended the fg+bg tail after every reset, including the
+		// closing reset at the end of the line. Strip that trailing tail so the
+		// line ends clean and neither color bleeds into whatever follows.
+		processed = strings.TrimSuffix(processed, tail)
 		// And make sure the line really does end with a reset — lipgloss
 		// usually emits one, but pad-only rows we built ourselves may not.
 		if !strings.HasSuffix(processed, "\x1b[0m") && !strings.HasSuffix(processed, "\x1b[m") {
