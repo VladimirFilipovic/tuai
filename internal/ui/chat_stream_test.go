@@ -41,7 +41,7 @@ func (f *fakeStreamer) Cwd() string         { return f.cwd }
 // lands, mimicking the bubbletea loop without a real event source.
 func drainTurn(m chatModel) chatModel {
 	for {
-		msg := waitChunk(m.streamCh)()
+		msg := waitChunk(m.streamCh, m.streamGen)()
 		cm := msg.(chunkMsg)
 		m, _ = m.Update(cm)
 		if !m.streaming {

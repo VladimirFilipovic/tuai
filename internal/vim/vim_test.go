@@ -228,8 +228,8 @@ func TestUnknownGPrefixClearsState(t *testing.T) {
 func TestPasteLinewiseWithCount(t *testing.T) {
 	// Regression: 3p of a yy'd line used to concatenate into one line.
 	ta, e := newTA(t, "first\nsecond", 0, 0)
-	press(ta, e, "y", "y")    // yank line 0 linewise
-	press(ta, e, "3", "p")    // paste 3 times below
+	press(ta, e, "y", "y") // yank line 0 linewise
+	press(ta, e, "3", "p") // paste 3 times below
 	want := "first\nfirst\nfirst\nfirst\nsecond"
 	if got := ta.Value(); got != want {
 		t.Errorf("yy then 3p:\n  got  %q\n  want %q", got, want)

@@ -331,4 +331,3 @@ func stripANSI(s string) string {
 	}
 	return b.String()
 }
-

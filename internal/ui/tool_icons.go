@@ -27,6 +27,8 @@ func toolIcon(name string) string {
 		return "🔎"
 	case "task", "agent":
 		return "🤖"
+	case "askuserquestion":
+		return "❓"
 	case "todowrite", "taskcreate", "taskupdate", "tasklist":
 		return "☑"
 	case "notebookedit":

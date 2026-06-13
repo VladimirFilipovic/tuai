@@ -14,9 +14,11 @@ type modelOption struct {
 
 var Models = []modelOption{
 	{Alias: "", Label: "default", Description: "Let Claude Code decide."},
-	{Alias: "opus", Label: "opus", Description: "Most capable (Opus 4.x)."},
+	{Alias: "fable", Label: "fable", Description: "Most capable (Fable 5)."},
+	{Alias: "opus", Label: "opus", Description: "Highly capable (Opus 4.x)."},
 	{Alias: "sonnet", Label: "sonnet", Description: "Smart + fast (Sonnet 4.x)."},
 	{Alias: "haiku", Label: "haiku", Description: "Fastest (Haiku 4.x)."},
+	{Alias: "claude-fable-5", Label: "claude-fable-5", Description: "Fable 5 (full id)."},
 	{Alias: "claude-opus-4-7", Label: "claude-opus-4-7", Description: "Opus 4.7 (full id)."},
 	{Alias: "claude-sonnet-4-6", Label: "claude-sonnet-4-6", Description: "Sonnet 4.6 (full id)."},
 	{Alias: "claude-haiku-4-5-20251001", Label: "claude-haiku-4-5", Description: "Haiku 4.5 (full id)."},

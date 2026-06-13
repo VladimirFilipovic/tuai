@@ -66,8 +66,9 @@ func (m *chatModel) handleSlash(input string) tea.Cmd {
 		m.session.Messages = []storage.Message{}
 		m.pending = ""
 		m.err = nil
+		m.question.close()
 		_ = m.store.Save(m.session)
-		m.refreshViewport()
+		m.relayout()
 		return nil
 
 	case "/vim":

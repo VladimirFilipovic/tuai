@@ -63,3 +63,18 @@ func TestRenderNoInput(t *testing.T) {
 		t.Errorf("missing tool name: %q", out)
 	}
 }
+
+func TestRenderAskUserQuestion(t *testing.T) {
+	input := `{"questions":[{"question":"Which DB?","header":"Database","options":[` +
+		`{"label":"Postgres","description":"relational"},{"label":"Redis"}]}]}`
+	out := Render("AskUserQuestion", input, 80, testDeps())
+	if !strings.Contains(out, "Which DB?") {
+		t.Errorf("missing question text: %q", out)
+	}
+	if !strings.Contains(out, "• Postgres — relational") {
+		t.Errorf("missing option with description: %q", out)
+	}
+	if !strings.Contains(out, "• Redis") {
+		t.Errorf("missing bare option: %q", out)
+	}
+}

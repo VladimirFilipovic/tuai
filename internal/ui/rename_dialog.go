@@ -10,11 +10,11 @@ import (
 // renameDialogModel collects a new name for a session via a single-line
 // textarea modal. Triggered from the command palette or the sessions list.
 type renameDialogModel struct {
-	ta          textarea.Model
-	width       int
-	height      int
-	sessionID   string
-	originalNm  string
+	ta         textarea.Model
+	width      int
+	height     int
+	sessionID  string
+	originalNm string
 }
 
 type openRenameMsg struct {

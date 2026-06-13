@@ -67,6 +67,8 @@ func TestShortModelID(t *testing.T) {
 		{"", ""},
 		{"opus", "opus"},
 		{"sonnet", "sonnet"},
+		{"fable", "fable"},
+		{"claude-fable-5", "fable-5"},
 		{"claude-opus-4-7", "opus-4-7"},
 		{"claude-sonnet-4-6-20251022", "sonnet-4-6"},
 		{"claude-haiku-4-5-20251001", "haiku-4-5"},

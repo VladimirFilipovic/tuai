@@ -72,19 +72,24 @@ type toolEvent struct {
 }
 
 type chatModel struct {
-	session    *storage.Session
-	store      *storage.Store
-	client     claude.Streamer
-	viewport   viewport.Model
-	textarea   textarea.Model
-	spin       spinner.Model
-	streaming  bool
-	pending    string      // final assistant text accumulated during the stream
-	thinking   string      // live thinking text (not persisted)
-	tools      []toolEvent // tool calls in this turn (not persisted)
-	queued     []string    // messages typed while streaming, sent after done
-	notice     string      // transient one-line notice (e.g. "model set to opus")
-	streamCh   <-chan claude.Chunk
+	session   *storage.Session
+	store     *storage.Store
+	client    claude.Streamer
+	viewport  viewport.Model
+	textarea  textarea.Model
+	spin      spinner.Model
+	streaming bool
+	pending   string      // final assistant text accumulated during the stream
+	thinking  string      // live thinking text (not persisted)
+	tools     []toolEvent // tool calls in this turn (not persisted)
+	queued    []string    // messages typed while streaming, sent after done
+	notice    string      // transient one-line notice (e.g. "model set to opus")
+	streamCh  <-chan claude.Chunk
+	// streamGen identifies the current stream. Each chunkMsg carries the
+	// generation of the stream it came from; chunks from an older generation
+	// (a cancelled turn whose channel was still being drained when a new turn
+	// started) are dropped instead of corrupting the new turn's state.
+	streamGen  int
 	cancel     context.CancelFunc
 	width      int
 	height     int
@@ -128,6 +133,11 @@ type chatModel struct {
 	// here ahead of the textarea while it's open.
 	ac pathAutocompleteModel
 
+	// question is the AskUserQuestion picker panel. It opens when a turn ends
+	// with an AskUserQuestion tool call; while the textarea is empty it owns
+	// the navigation keys (see question.go for the focus rule).
+	question questionModel
+
 	// selActive is true while a mouse drag-selection is in progress over the
 	// chat viewport. selAnchor / selCursor hold the drag endpoints in content
 	// coordinates; on release the spanned text is cleaned and copied to the
@@ -147,6 +157,7 @@ type chatModel struct {
 }
 
 type chunkMsg struct {
+	gen       int // stream generation this chunk belongs to (see streamGen)
 	text      string
 	thinking  string
 	toolUse   string
@@ -206,13 +217,14 @@ func newChatModel(sess *storage.Session, store *storage.Store, client claude.Str
 	return m
 }
 
-func waitChunk(ch <-chan claude.Chunk) tea.Cmd {
+func waitChunk(ch <-chan claude.Chunk, gen int) tea.Cmd {
 	return func() tea.Msg {
 		c, ok := <-ch
 		if !ok {
-			return chunkMsg{done: true}
+			return chunkMsg{done: true, gen: gen}
 		}
 		return chunkMsg{
+			gen:       gen,
 			text:      c.Text,
 			thinking:  c.Thinking,
 			toolUse:   c.ToolUse,
@@ -267,9 +279,10 @@ func (m chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 			m.session.Messages = []storage.Message{}
 			m.pending = ""
 			m.err = nil
+			m.question.close()
 			m.resetHistoryNav()
 			_ = m.store.Save(m.session)
-			m.refreshViewport()
+			m.relayout()
 		}
 		return m, nil
 
@@ -301,6 +314,15 @@ func (m chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 		// Any keypress dismisses a lingering selection highlight from the
 		// last copy so it doesn't sit there while the user types or scrolls.
 		m.clearSelection()
+		// The AskUserQuestion panel owns its navigation keys while it's open
+		// and the textarea is empty. The moment the user types, keys flow to
+		// the textarea again — a typed reply is the free-form answer and
+		// sending it closes the panel (see sendMessage).
+		if m.question.active && strings.TrimSpace(m.textarea.Value()) == "" {
+			if handled, qCmd := m.handleQuestionKey(msg.String()); handled {
+				return m, qCmd
+			}
+		}
 		// Vim hook runs before the host's own key handling so motions,
 		// operators, and the i/a/o family don't fall through to the
 		// textarea. Insert mode reports "not consumed" for everything
@@ -355,6 +377,10 @@ func (m chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 				m.cancel()
 				m.streaming = false
 				m.cancel = nil
+				// Keep what already streamed in: persist the turn's tool calls
+				// and partial text so the record survives instead of vanishing
+				// on the next send.
+				m.finishInterruptedTurn()
 				m.refreshViewport()
 				return m, nil
 			}
@@ -421,8 +447,9 @@ func (m chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 				m.session.Messages = []storage.Message{}
 				m.pending = ""
 				m.err = nil
+				m.question.close()
 				_ = m.store.Save(m.session)
-				m.refreshViewport()
+				m.relayout()
 				return m, nil
 			}
 
@@ -444,6 +471,13 @@ func (m chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 		}
 
 	case chunkMsg:
+		// Chunks from an older stream generation belong to a cancelled turn
+		// whose channel was still draining when a new turn started. Processing
+		// them would flip streaming off / persist tools against the wrong
+		// turn, so drop them outright.
+		if msg.gen != m.streamGen {
+			return m, nil
+		}
 		switch {
 		case msg.sessionID != "":
 			// system.init — capture session id (first turn only) and let header
@@ -452,7 +486,7 @@ func (m chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 				m.session.ResumeID = msg.sessionID
 				_ = m.store.Save(m.session)
 			}
-			cmds = append(cmds, waitChunk(m.streamCh))
+			cmds = append(cmds, waitChunk(m.streamCh, m.streamGen))
 
 		case msg.err != nil:
 			if !m.streaming {
@@ -464,8 +498,10 @@ func (m chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 			if !errors.Is(msg.err, context.Canceled) {
 				m.err = msg.err
 			}
+			// Persist whatever already streamed in — a turn that dies halfway
+			// often still produced useful text/tool calls.
 			m.persistTools()
-			m.pending = ""
+			m.persistPending()
 			m.thinking = ""
 			m.cancel = nil
 			m.refreshViewport()
@@ -480,31 +516,30 @@ func (m chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 			m.streaming = false
 			m.lastCost = msg.cost
 			m.lastDur = msg.durMs
+			// Detect an AskUserQuestion call before persistTools clears the
+			// live buffer; the panel opens below once the turn is wrapped up.
+			questions := pendingQuestions(m.tools)
 			m.persistTools()
-			if m.pending != "" {
-				m.session.Messages = append(m.session.Messages, storage.Message{
-					Role:    storage.RoleAssistant,
-					Content: m.pending,
-					At:      time.Now(),
-				})
-				m.pending = ""
-				_ = m.store.Save(m.session)
-			}
+			m.persistPending()
 			m.thinking = ""
 			m.cancel = nil
 			m.refreshViewport()
 
-			// Drain a queued message, if any.
+			// Drain a queued message, if any. A queued message outranks the
+			// question panel — the user already decided what to say next.
 			if len(m.queued) > 0 {
 				next := m.queued[0]
 				m.queued = m.queued[1:]
 				cmds = append(cmds, m.sendMessage(next))
+			} else if questions != nil {
+				m.question.open(questions)
+				m.relayout()
 			}
 
 		case msg.toolUse != "":
 			m.tools = append(m.tools, toolEvent{name: msg.toolUse})
 			m.refreshViewport()
-			cmds = append(cmds, waitChunk(m.streamCh))
+			cmds = append(cmds, waitChunk(m.streamCh, m.streamGen))
 
 		case msg.toolInput != "":
 			if len(m.tools) > 0 {
@@ -515,7 +550,7 @@ func (m chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 					m.lastRender = now
 				}
 			}
-			cmds = append(cmds, waitChunk(m.streamCh))
+			cmds = append(cmds, waitChunk(m.streamCh, m.streamGen))
 
 		case msg.thinking != "":
 			m.thinking += msg.thinking
@@ -524,7 +559,7 @@ func (m chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 				m.refreshViewport()
 				m.lastRender = now
 			}
-			cmds = append(cmds, waitChunk(m.streamCh))
+			cmds = append(cmds, waitChunk(m.streamCh, m.streamGen))
 
 		default:
 			m.pending += msg.text
@@ -533,7 +568,7 @@ func (m chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 				m.refreshViewport()
 				m.lastRender = now
 			}
-			cmds = append(cmds, waitChunk(m.streamCh))
+			cmds = append(cmds, waitChunk(m.streamCh, m.streamGen))
 		}
 	}
 
@@ -656,16 +691,23 @@ func (m *chatModel) sendMessage(input string) tea.Cmd {
 	m.tools = nil
 	m.err = nil
 	m.atBottom = true
+	// A new turn supersedes an open question panel: whatever the user sent
+	// (a picked answer or a free-form reply) is the answer.
+	if m.question.active {
+		m.question.close()
+		m.relayout()
+	}
 	m.refreshViewport()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
+	m.streamGen++
 	// Inline @file references just before the prompt leaves; the stored
 	// message above keeps the user's raw text, not the expanded attachments.
 	expanded := prompt.ExpandAtRefs(input, m.client.Cwd())
 	ch := m.client.Stream(ctx, expanded, m.session.ResumeID)
 	m.streamCh = ch
-	return tea.Batch(waitChunk(ch), m.spin.Tick)
+	return tea.Batch(waitChunk(ch, m.streamGen), m.spin.Tick)
 }
 
 // handleSlash parses /commands typed in the input. Returns the tea.Cmd to
@@ -689,6 +731,103 @@ func (m *chatModel) persistTools() {
 	}
 	m.tools = nil
 	_ = m.store.Save(m.session)
+}
+
+// persistPending appends the accumulated assistant text (if any) to the
+// session and clears the live buffer. Shared by the done, error, and
+// esc-cancel paths so partial output is never silently lost.
+func (m *chatModel) persistPending() {
+	if strings.TrimSpace(m.pending) == "" {
+		m.pending = ""
+		return
+	}
+	m.session.Messages = append(m.session.Messages, storage.Message{
+		Role:    storage.RoleAssistant,
+		Content: m.pending,
+		At:      time.Now(),
+	})
+	m.pending = ""
+	_ = m.store.Save(m.session)
+}
+
+// finishInterruptedTurn persists what an esc-cancelled turn already produced
+// (tool calls + partial text) so the record survives the cancellation.
+func (m *chatModel) finishInterruptedTurn() {
+	hadOutput := len(m.tools) > 0 || strings.TrimSpace(m.pending) != ""
+	m.persistTools()
+	m.persistPending()
+	m.thinking = ""
+	if hadOutput {
+		m.notice = "interrupted — partial response kept"
+	} else {
+		m.notice = "interrupted"
+	}
+}
+
+// pendingQuestions scans a turn's tool calls for the last complete
+// AskUserQuestion invocation and returns its parsed questions (nil if none).
+func pendingQuestions(tools []toolEvent) []claudeQuestion {
+	for i := len(tools) - 1; i >= 0; i-- {
+		if !isQuestionTool(tools[i].name) {
+			continue
+		}
+		if qs := parseQuestions(tools[i].input); qs != nil {
+			return qs
+		}
+	}
+	return nil
+}
+
+// handleQuestionKey routes one keypress to the open question panel. Returns
+// handled=false for keys the panel doesn't own so they keep their normal
+// meaning (typing, palette, …).
+func (m *chatModel) handleQuestionKey(key string) (bool, tea.Cmd) {
+	switch key {
+	case "up":
+		m.question.moveUp()
+		return true, nil
+	case "down":
+		m.question.moveDown()
+		return true, nil
+	case "space", " ":
+		m.question.toggle()
+		return true, nil
+	case "enter":
+		return true, m.confirmQuestion()
+	case "esc":
+		m.question.close()
+		m.notice = "question dismissed — type your own answer"
+		m.relayout()
+		return true, nil
+	}
+	// Number keys jump straight to an option: pick-and-confirm for single
+	// select, toggle for multi-select.
+	if len(key) == 1 && key[0] >= '1' && key[0] <= '9' {
+		if m.question.pick(int(key[0] - '1')) {
+			if !m.question.current().MultiSelect {
+				return true, m.confirmQuestion()
+			}
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// confirmQuestion locks in the current question; once the last one is
+// answered the composed reply is sent as the next turn.
+func (m *chatModel) confirmQuestion() tea.Cmd {
+	answer, done := m.question.confirm()
+	if !done {
+		// Advanced to the next question — panel height may have changed.
+		m.relayout()
+		return nil
+	}
+	m.question.close()
+	m.relayout()
+	if strings.TrimSpace(answer) == "" {
+		return nil
+	}
+	return m.sendMessage(answer)
 }
 
 func (m *chatModel) refreshViewport() {
@@ -746,6 +885,10 @@ func (m chatModel) View() string {
 
 	b.WriteString(m.viewport.View())
 	b.WriteString("\n")
+	if m.question.active {
+		b.WriteString(m.question.view(m.width))
+		b.WriteString("\n")
+	}
 	if m.ac.active {
 		b.WriteString(m.ac.view(m.width))
 		b.WriteString("\n")
@@ -757,6 +900,8 @@ func (m chatModel) View() string {
 	helpText := "enter send • alt+enter/ctrl+j newline • ↑↓ history • pgup/pgdn scroll • drag to copy • ctrl+v paste • ctrl+p palette • /help • esc back"
 	if m.ac.active {
 		helpText = "↑↓ pick • tab/enter accept • esc dismiss"
+	} else if m.question.active {
+		helpText = "↑↓ move • 1-9 pick • space toggle • enter answer • esc dismiss • or just type a reply"
 	}
 	if m.vim != nil {
 		// Surface the active mode prominently — without it the user has no
@@ -790,10 +935,11 @@ func (m *chatModel) relayout() {
 	}
 	taContent := m.desiredInputHeight()
 	acHeight := m.ac.height()
-	// Layout: header (1) + divider (1) + autocomplete (acHeight) + textarea
-	// (taContent) + help (1). The autocomplete eats viewport rows when open;
-	// the viewport reclaims them once it closes.
-	vpHeight := max(h-3-taContent-acHeight, 3)
+	qHeight := m.question.height(w)
+	// Layout: header (1) + divider (1) + question panel (qHeight) +
+	// autocomplete (acHeight) + textarea (taContent) + help (1). The panels
+	// eat viewport rows while open; the viewport reclaims them on close.
+	vpHeight := max(h-3-taContent-acHeight-qHeight, 3)
 	m.viewport.SetWidth(w)
 	m.viewport.SetHeight(vpHeight)
 	m.textarea.SetWidth(w - 4)

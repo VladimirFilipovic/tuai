@@ -14,6 +14,7 @@ Supports:
 - Changing models
 - Theme selection
 - Animations around agents actions
+- Interactive answers to Claude's questions (AskUserQuestion) — pick options with ↑↓ / number keys, or just type your own reply
 
 ## Demo
 

@@ -34,6 +34,8 @@ func (m *chatModel) streamStatus() string {
 			return "browsing the web…"
 		case "task", "agent":
 			return "running subagent…"
+		case askUserQuestionTool:
+			return "asking you a question…"
 		default:
 			return "running " + last.name + "…"
 		}

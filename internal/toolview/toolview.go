@@ -88,6 +88,8 @@ func renderToolInput(name, raw string, wrap int, d Deps) string {
 		return renderKVInput(fields, []string{"query"}, innerWrap, d)
 	case "task", "agent":
 		return renderKVInput(fields, []string{"subagent_type", "description", "prompt"}, innerWrap, d)
+	case "askuserquestion":
+		return renderQuestionInput(fields, innerWrap, d)
 	}
 	return renderKVInput(fields, sortedKeys(fields), innerWrap, d)
 }
@@ -240,6 +242,45 @@ func renderKVInput(f map[string]any, keys []string, wrap int, d Deps) string {
 			b.WriteString(dimLine(prefix+ln, wrap, d))
 			b.WriteString("\n")
 			first = false
+		}
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// renderQuestionInput renders an AskUserQuestion call: each question followed
+// by its options. The question text gets the accent color so the block reads
+// as "Claude asked you something" rather than generic tool noise.
+func renderQuestionInput(f map[string]any, wrap int, d Deps) string {
+	questions, _ := f["questions"].([]any)
+	accent := lipgloss.NewStyle().Foreground(d.Accent)
+	var b strings.Builder
+	for _, qa := range questions {
+		qm, ok := qa.(map[string]any)
+		if !ok {
+			continue
+		}
+		q := stringField(qm, "question")
+		if q == "" {
+			continue
+		}
+		b.WriteString(accent.Render("    " + truncateLine(q, wrap)))
+		b.WriteString("\n")
+		opts, _ := qm["options"].([]any)
+		for _, oa := range opts {
+			om, ok := oa.(map[string]any)
+			if !ok {
+				continue
+			}
+			label := stringField(om, "label")
+			if label == "" {
+				continue
+			}
+			line := "  • " + label
+			if desc := stringField(om, "description"); desc != "" {
+				line += " — " + desc
+			}
+			b.WriteString(dimLine(line, wrap, d))
+			b.WriteString("\n")
 		}
 	}
 	return strings.TrimRight(b.String(), "\n")

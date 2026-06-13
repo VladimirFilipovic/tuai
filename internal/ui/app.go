@@ -136,7 +136,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c":
 			return a, tea.Quit
 		case "q":
-			if a.view == viewSessions {
+			// Only quit when the list itself has focus — while the fuzzy
+			// filter is being typed into, "q" is just a character.
+			if a.view == viewSessions && !a.sessions.filterActive {
 				return a, tea.Quit
 			}
 		case "ctrl+t":
@@ -171,7 +173,11 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, loadSessions(a.store)
 
 	case themePickedMsg:
-		_ = storage.SaveConfig(storage.Config{Theme: msg.name})
+		// Load-modify-save: writing a fresh Config here would wipe the saved
+		// model, vim, and appearance settings alongside the theme.
+		cur, _ := storage.LoadConfig()
+		cur.Theme = msg.name
+		_ = storage.SaveConfig(cur)
 		a.view = a.prevView
 		// repaint chat if we came from there
 		if a.view == viewChat {
