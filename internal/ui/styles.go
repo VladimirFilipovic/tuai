@@ -66,6 +66,16 @@ func subtleBg() color.Color {
 	return lipgloss.Color("#f1ebd9")
 }
 
+// placeholderFg returns the input placeholder color. The theme's Dim reads
+// fine on dark bubble backgrounds but is too faint on the light cream bg, so
+// in light mode we step it down toward the text color for legible contrast.
+func placeholderFg(t Theme) color.Color {
+	if isDark() {
+		return t.Dim()
+	}
+	return lipgloss.Color("#8a7a62")
+}
+
 type styleSet struct {
 	Title           lipgloss.Style
 	TitleBar        lipgloss.Style

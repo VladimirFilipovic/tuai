@@ -206,14 +206,22 @@ func styleTextarea(ta *textarea.Model) {
 	st := ta.Styles()
 
 	bg := lipgloss.NewStyle().Background(subtleBg())
+	// Typed text needs an explicit foreground: without one it inherits the
+	// terminal's default fg, which washes out when appearance is forced to
+	// light inside a dark terminal (light fg on the cream bubble bg).
+	text := lipgloss.NewStyle().Background(subtleBg()).Foreground(t.CodeFg())
 	st.Focused.Base = bg
 	st.Blurred.Base = bg
-	st.Focused.CursorLine = bg
-	st.Blurred.CursorLine = bg
-	st.Focused.Text = bg
-	st.Blurred.Text = bg
-	st.Focused.Placeholder = lipgloss.NewStyle().Foreground(t.Dim()).Background(subtleBg())
-	st.Blurred.Placeholder = lipgloss.NewStyle().Foreground(t.Dim()).Background(subtleBg())
+	// CursorLine styles the whole line the cursor sits on and overrides Text
+	// there, so it needs the same explicit foreground — otherwise the text
+	// you're actively typing washes out even when Text is set.
+	st.Focused.CursorLine = text
+	st.Blurred.CursorLine = text
+	st.Focused.Text = text
+	st.Blurred.Text = text
+	placeholder := lipgloss.NewStyle().Foreground(placeholderFg(t)).Background(subtleBg())
+	st.Focused.Placeholder = placeholder
+	st.Blurred.Placeholder = placeholder
 
 	ta.SetStyles(st)
 }
