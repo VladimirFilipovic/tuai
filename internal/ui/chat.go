@@ -543,7 +543,21 @@ func (m chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 
 		case msg.toolInput != "":
 			if len(m.tools) > 0 {
-				m.tools[len(m.tools)-1].input += msg.toolInput
+				last := &m.tools[len(m.tools)-1]
+				last.input += msg.toolInput
+				// The moment an AskUserQuestion call is fully formed, stop
+				// the turn and open the picker. Headless `claude -p` has no
+				// way to answer the tool, so letting the turn run on means
+				// the CLI auto-denies it and the model apologises ("since I
+				// can't get your input…") before we ever show the options.
+				// Cancelling here pauses the turn on the question; the
+				// picked answer resumes it as the next --resume turn.
+				if isQuestionTool(last.name) {
+					if qs := parseQuestions(last.input); qs != nil {
+						m.openQuestionEarly(qs)
+						return m, tea.Batch(cmds...)
+					}
+				}
 				now := time.Now()
 				if now.Sub(m.lastRender) > 50*time.Millisecond {
 					m.refreshViewport()
@@ -776,6 +790,25 @@ func pendingQuestions(tools []toolEvent) []claudeQuestion {
 		}
 	}
 	return nil
+}
+
+// openQuestionEarly aborts the in-flight turn the instant a complete
+// AskUserQuestion call has streamed in and opens the interactive picker. We
+// stop here rather than waiting for the turn to end because the headless CLI
+// would otherwise auto-deny the unanswerable tool and stream a refusal first.
+// Whatever text/tool calls already arrived are persisted so the record holds.
+func (m *chatModel) openQuestionEarly(qs []claudeQuestion) {
+	if m.cancel != nil {
+		m.cancel()
+		m.cancel = nil
+	}
+	m.streaming = false
+	m.persistTools()
+	m.persistPending()
+	m.thinking = ""
+	m.question.open(qs)
+	m.relayout()
+	m.refreshViewport()
 }
 
 // handleQuestionKey routes one keypress to the open question panel. Returns

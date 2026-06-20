@@ -56,7 +56,8 @@ func renderMarkdown(text string, wrapWidth int) string {
 		fenceLang = ""
 	}
 
-	for _, line := range lines {
+	for i := 0; i < len(lines); i++ {
+		line := lines[i]
 		if inFence {
 			if fenceCloseRe.MatchString(line) {
 				flushFence()
@@ -69,6 +70,13 @@ func renderMarkdown(text string, wrapWidth int) string {
 		if m := fenceOpenRe.FindStringSubmatch(line); m != nil {
 			inFence = true
 			fenceLang = m[1]
+			continue
+		}
+		if isTableHeader(lines, i) {
+			rows, aligns, consumed := collectTable(lines, i)
+			out.WriteString(renderTable(rows, aligns, wrapWidth))
+			out.WriteString("\n")
+			i += consumed - 1
 			continue
 		}
 		out.WriteString(renderProseLine(line, wrapWidth))
@@ -266,6 +274,312 @@ func renderDiff(code string, wrapWidth int) string {
 	}
 	b.WriteString("  " + hr)
 	return b.String()
+}
+
+// --- GFM tables ---
+
+const (
+	alignLeft = iota
+	alignCenter
+	alignRight
+)
+
+// isTableHeader reports whether lines[i] starts a GFM table: a row containing
+// at least one "|" and at least one non-empty cell, immediately followed by a
+// delimiter row (`---|:--:|--:` style).
+func isTableHeader(lines []string, i int) bool {
+	if !strings.Contains(lines[i], "|") {
+		return false
+	}
+	if i+1 >= len(lines) || !isDelimiterRow(lines[i+1]) {
+		return false
+	}
+	for _, c := range splitTableRow(lines[i]) {
+		if strings.TrimSpace(c) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// isDelimiterRow reports whether s is a table delimiter row: every cell is made
+// only of '-', ':' and spaces, and at least one cell carries a dash.
+func isDelimiterRow(s string) bool {
+	if !strings.Contains(s, "|") && !strings.Contains(s, "-") {
+		return false
+	}
+	cells := splitTableRow(s)
+	if len(cells) == 0 {
+		return false
+	}
+	sawDash := false
+	for _, c := range cells {
+		c = strings.TrimSpace(c)
+		if c == "" {
+			return false
+		}
+		for _, r := range c {
+			if r != '-' && r != ':' && r != ' ' {
+				return false
+			}
+		}
+		if strings.ContainsRune(c, '-') {
+			sawDash = true
+		}
+	}
+	return sawDash
+}
+
+// splitTableRow splits a "| a | b |" row into trimmed cell strings, tolerating
+// rows with or without the leading/trailing pipe.
+func splitTableRow(s string) []string {
+	s = strings.TrimSpace(s)
+	s = strings.TrimPrefix(s, "|")
+	s = strings.TrimSuffix(s, "|")
+	parts := strings.Split(s, "|")
+	for i := range parts {
+		parts[i] = strings.TrimSpace(parts[i])
+	}
+	return parts
+}
+
+// parseAligns reads per-column alignment from a delimiter row.
+func parseAligns(s string) []int {
+	cells := splitTableRow(s)
+	aligns := make([]int, len(cells))
+	for i, c := range cells {
+		c = strings.TrimSpace(c)
+		left := strings.HasPrefix(c, ":")
+		right := strings.HasSuffix(c, ":")
+		switch {
+		case left && right:
+			aligns[i] = alignCenter
+		case right:
+			aligns[i] = alignRight
+		default:
+			aligns[i] = alignLeft
+		}
+	}
+	return aligns
+}
+
+// collectTable gathers a table block beginning at lines[start] (the header).
+// Returns the parsed rows (row 0 is the header), per-column alignments, and how
+// many source lines were consumed.
+func collectTable(lines []string, start int) (rows [][]string, aligns []int, consumed int) {
+	aligns = parseAligns(lines[start+1])
+	rows = append(rows, splitTableRow(lines[start]))
+	i := start + 2
+	for i < len(lines) {
+		ln := lines[i]
+		if strings.TrimSpace(ln) == "" || !strings.Contains(ln, "|") {
+			break
+		}
+		if fenceOpenRe.MatchString(ln) {
+			break
+		}
+		rows = append(rows, splitTableRow(ln))
+		i++
+	}
+	return rows, aligns, i - start
+}
+
+// renderTable lays a parsed table out with box-drawing borders, a bold header,
+// per-column alignment, and column widths that fit wrapWidth (shrinking and
+// wrapping cells when the natural layout would overflow). Rows are indented two
+// cells so the frame sits inside the message bubble.
+func renderTable(rows [][]string, aligns []int, wrapWidth int) string {
+	if len(rows) == 0 {
+		return ""
+	}
+	t := CurrentTheme()
+	border := lipgloss.NewStyle().Foreground(t.Border())
+	head := lipgloss.NewStyle().Foreground(t.Accent()).Bold(true)
+
+	ncols := len(aligns)
+	for _, r := range rows {
+		if len(r) > ncols {
+			ncols = len(r)
+		}
+	}
+	if ncols == 0 {
+		return ""
+	}
+	for len(aligns) < ncols {
+		aligns = append(aligns, alignLeft)
+	}
+
+	// Natural width per column from the widest cell.
+	widths := make([]int, ncols)
+	for _, r := range rows {
+		for c := 0; c < ncols; c++ {
+			cell := ""
+			if c < len(r) {
+				cell = r[c]
+			}
+			if w := lipgloss.Width(cell); w > widths[c] {
+				widths[c] = w
+			}
+		}
+	}
+	for c := range widths {
+		if widths[c] < 1 {
+			widths[c] = 1
+		}
+	}
+
+	// Fit to the bubble: innerWidth minus the frame overhead (one bar between
+	// and around each column, plus one padding cell on each side of a column).
+	innerWidth := wrapWidth - 2
+	if innerWidth < 8 {
+		innerWidth = 8
+	}
+	avail := innerWidth - (ncols + 1) - 2*ncols
+	if avail < ncols {
+		avail = ncols
+	}
+	shrinkWidths(widths, avail)
+
+	var b strings.Builder
+	b.WriteString(tableRule(widths, "┌", "┬", "┐", border) + "\n")
+	for ri, r := range rows {
+		b.WriteString(tableRow(r, widths, aligns, ri == 0, border, head) + "\n")
+		if ri == 0 {
+			b.WriteString(tableRule(widths, "├", "┼", "┤", border) + "\n")
+		}
+	}
+	b.WriteString(tableRule(widths, "└", "┴", "┘", border))
+	return b.String()
+}
+
+// shrinkWidths reduces column widths in place to fit avail, scaling each column
+// proportionally to its natural width (min 1) when the total overflows.
+func shrinkWidths(widths []int, avail int) {
+	total := 0
+	for _, w := range widths {
+		total += w
+	}
+	if total <= avail {
+		return
+	}
+	used := 0
+	for i, w := range widths {
+		sw := w * avail / total
+		if sw < 1 {
+			sw = 1
+		}
+		widths[i] = sw
+		used += sw
+	}
+	// Hand out / claw back the rounding remainder against the widest columns.
+	for used < avail {
+		mi := 0
+		for j := range widths {
+			if widths[j] < widths[mi] {
+				mi = j
+			}
+		}
+		widths[mi]++
+		used++
+	}
+	for used > avail {
+		mi := 0
+		for j := range widths {
+			if widths[j] > widths[mi] {
+				mi = j
+			}
+		}
+		if widths[mi] <= 1 {
+			break
+		}
+		widths[mi]--
+		used--
+	}
+}
+
+// tableRule renders a horizontal frame line with the given corner/junction runes.
+func tableRule(widths []int, left, mid, right string, border lipgloss.Style) string {
+	segs := make([]string, len(widths))
+	for i, w := range widths {
+		segs[i] = strings.Repeat("─", w+2)
+	}
+	return "  " + border.Render(left+strings.Join(segs, mid)+right)
+}
+
+// tableRow renders one (possibly multi-line) table row, wrapping each cell to
+// its column width and aligning the result.
+func tableRow(cells []string, widths, aligns []int, isHeader bool, border, head lipgloss.Style) string {
+	wrapped := make([][]string, len(widths))
+	rowH := 1
+	for c := range widths {
+		cell := ""
+		if c < len(cells) {
+			cell = cells[c]
+		}
+		wrapped[c] = wrapCell(cell, widths[c])
+		if len(wrapped[c]) > rowH {
+			rowH = len(wrapped[c])
+		}
+	}
+	bar := border.Render("│")
+	var b strings.Builder
+	for line := 0; line < rowH; line++ {
+		b.WriteString("  " + bar)
+		for c := range widths {
+			txt := ""
+			if line < len(wrapped[c]) {
+				txt = wrapped[c][line]
+			}
+			if isHeader && txt != "" {
+				txt = head.Render(txt)
+			}
+			b.WriteString(" " + padCell(txt, widths[c], aligns[c]) + " " + bar)
+		}
+		b.WriteString("\n")
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// wrapCell word-wraps plain cell text to width w, hard-cutting any single line
+// still too wide (an unbreakable token).
+func wrapCell(s string, w int) []string {
+	if s == "" {
+		return []string{""}
+	}
+	if w < 1 {
+		w = 1
+	}
+	var out []string
+	for _, ln := range strings.Split(wordwrap.String(s, w), "\n") {
+		for lipgloss.Width(ln) > w {
+			r := []rune(ln)
+			out = append(out, string(r[:w]))
+			ln = string(r[w:])
+		}
+		out = append(out, ln)
+	}
+	if len(out) == 0 {
+		out = append(out, "")
+	}
+	return out
+}
+
+// padCell pads styled cell text to width per its alignment (width-aware so ANSI
+// styling on the content doesn't throw the math off).
+func padCell(s string, width, align int) string {
+	gap := width - lipgloss.Width(s)
+	if gap <= 0 {
+		return s
+	}
+	switch align {
+	case alignRight:
+		return strings.Repeat(" ", gap) + s
+	case alignCenter:
+		l := gap / 2
+		return strings.Repeat(" ", l) + s + strings.Repeat(" ", gap-l)
+	default:
+		return s + strings.Repeat(" ", gap)
+	}
 }
 
 func renderPlainCodeBlock(code, lang string, wrapWidth int) string {
